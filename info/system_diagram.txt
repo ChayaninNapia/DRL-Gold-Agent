@@ -1,0 +1,82 @@
+flowchart TD
+    %% Phase 1A: Data Engineering
+    subgraph Phase1A ["Phase 1A: Data Preparation"]
+        direction TB
+        RawData[("📊 Raw Historical Data\n(CSV/DB from MT5)")]
+        Process["⚙️ Preprocessing & Feature Engineering\n(Clean, Normalize, Indicators)"]
+        StateData[("📦 State Representation\n(Windowing / PyTorch Tensors)")]
+
+        RawData --> Process --> StateData
+    end
+
+    %% Phase 1B: RL Training
+    subgraph Phase1B ["Phase 1B: Reinforcement Learning"]
+        direction TB
+        subgraph GymEnv ["🎮 Custom Gym Environment"]
+            direction TB
+            Reward["💰 Reward Function\n(Profit - Drawdown Penalty)"]
+            Sim["📈 Market Simulator\n(Step-by-step price replay)"]
+        end
+        Agent["🧠 RL Agent (Neural Network)\n(e.g., REINFORCE, TD, Actor-Critic)"]
+
+        StateData --> GymEnv
+        GymEnv -->|State and Reward| Agent
+        Agent -->|Action Buy or Sell| GymEnv
+    end
+
+    %% Phase 1C: Evaluation
+    subgraph Phase1C ["Phase 1C: Evaluation & Export"]
+        direction TB
+        Backtest["📉 Out-of-Sample Backtesting\n(Test on unseen data)"]
+        BestModel{"🏆 Final Trained Model"}
+
+        Agent -->|Save Weights| Backtest
+        Backtest -->|Pass Criteria| BestModel
+    end
+
+    %% Phase 2: Deployment
+    subgraph Phase2 ["Phase 2: Deployment Architecture"]
+        direction TB
+        subgraph Way1 ["Way 1: Standalone EA (ONNX)"]
+            direction TB
+            ONNX_File[/"📄 Model.onnx"/]
+            EA_ONNX["🤖 MQL5 EA (Native ONNX)"]
+            MT5_Edge["📈 MT5 Terminal (VPS)"]
+
+            ONNX_File -.->|Compile into| EA_ONNX
+            EA_ONNX -->|Execution| MT5_Edge
+        end
+
+        subgraph Way2 ["Way 2: Python Integration"]
+            direction TB
+            Py_Script["🌐 Python Main Script\n(Runs continuous loop)"]
+            MT5_Lib["📦 MetaTrader5 Library\n(pip install MetaTrader5)"]
+            MT5_Server["📈 MT5 Terminal (Runs in background)"]
+
+            Py_Script -->|1. Call copy_rates_from| MT5_Lib
+            MT5_Lib -->|Get Data| MT5_Server
+            MT5_Server -->|Return OHLCV Data| MT5_Lib
+            MT5_Lib -->|NumPy Array| Py_Script
+            
+            Py_Script -->|2. Call order_send| MT5_Lib
+            MT5_Lib -->|Execute Action| MT5_Server
+        end
+    end
+
+    %% Main Flow Connections
+    Phase1A --> Phase1B
+    Phase1B --> Phase1C
+    BestModel ===>|Export Model| ONNX_File
+    BestModel ===>|Load Weights into| Py_Script
+
+    %% Styling
+    classDef py fill:#306998,stroke:#FFE873,stroke-width:2px,color:#fff;
+    classDef mt5 fill:#0072c6,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef core fill:#4CAF50,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef data fill:#f4a261,stroke:#333,stroke-width:2px,color:#000;
+
+    class RawData,Process,StateData data;
+    class Agent,GymEnv,Reward,Sim,Backtest py;
+    class EA_ONNX,MT5_Edge,MT5_Server mt5;
+    class BestModel core;
+    class Py_Script,MT5_Lib py;
