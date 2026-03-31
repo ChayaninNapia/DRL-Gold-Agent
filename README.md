@@ -6,28 +6,17 @@ The objective of this project is to develop an automated Algorithmic Trading sys
 
 ## 2. System Architecture
 
-The system is divided into two primary phases:
+The architecture is divided into Model Development (Phase 1) and Deployment (Phase 2).
 
-### Phase 1: Offline Training (Python Lab)
+### Phase 1: Model Development (Offline)
+- **Phase 1A: Data Preparation**: Fetch raw historical data (CSV/DB) from MT5. Perform preprocessing, feature engineering (cleaning, normalizing, indicators), and create windowed state representations (e.g., PyTorch Tensors).
+- **Phase 1B: Reinforcement Learning**: Train the DRL agent (e.g., REINFORCE, TD, Actor-Critic) using a Custom Gym Environment featuring a step-by-step market simulator and a predefined reward function (Profit - Drawdown Penalty).
+- **Phase 1C: Evaluation & Export**: Conduct out-of-sample backtesting on unseen data to validate the agent and output the best-performing model.
 
-- **Data Preparation**: Fetch historical OHLCV data (synchronized with MT5 historical data). Perform Feature Engineering (e.g., RSI, MACD, Moving Averages) and apply strict Data Normalization/Scaling methodologies.
-
-- **Simulation**: Build a custom trading environment using the Gymnasium library to simulate market mechanics.
-
-- **Model Training**: Train a DRL agent (utilizing algorithms such as PPO, SAC, or DQN) to optimize the trading policy.
-
-- **Model Export**: Once training is satisfactory, export the trained Actor Network into the ONNX (.onnx) format for cross-platform deployment.
-
-### Phase 2: Online Execution & Backtesting (MQL5/MT5)
-
-- **Integration**: Develop an Expert Advisor (EA) in MetaTrader 5 that embeds the trained .onnx model using the `#resource` directive.
-
-- **Core Inference Logic**: 
-  - Extract real-time tick/bar data and calculate technical indicators natively in MQL5.
-  - **CRITICAL**: Replicate the exact mathematical Data Normalization equations used in the Python environment to ensure data consistency.
-  - Pass the normalized state vector to the `OnnxRun()` function to infer the optimal Action (Buy, Sell, Hold).
-
-- **Execution**: Process the model's output through a Risk Management module (handling Lot sizing, Trailing Stops, etc.) before executing `OrderSend()` for live trading or Strategy Tester backtesting.
+### Phase 2: Deployment Architecture (Online)
+The system supports two parallel deployment options:
+- **Way 1: Standalone EA (ONNX)**: Export the final trained model into an ONNX format (`.onnx`), compile it natively into an MQL5 Expert Advisor (EA), and execute directly on an MT5 terminal (e.g., via VPS).
+- **Way 2: Python Integration**: Load model weights into a continuous Python main script. Utilize the `MetaTrader5` library to communicate directly with an MT5 terminal running in the background for real-time OHLCV data retrieval and order execution.
 
 ## 3. Reinforcement Learning Formulation
 
