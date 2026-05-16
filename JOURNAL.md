@@ -6,6 +6,83 @@ For the active project spec see **[proposal/PROPOSAL.md](proposal/PROPOSAL.md)**
 
 ---
 
+## 2026-05-16 — Exp 0.5b/c/d ALL COMPLETE: on-policy collapse is structural (neither hyperparameter tuning nor BC warm-start fixes A2C/PPO); DDQN remains the working baseline
+
+### Status snapshot
+
+Phase 1a (Exp 0.5a) selected γ=0.30 for DDQN and solved DDQN collapse (0/3, +2.23% mean test_ret). Phases 1b and 1c tested whether the same medicine — and then a deeper hyperparameter fix — rescues the on-policy algorithms (A2C, PPO). **Both failed: A2C and PPO collapse 3/3 under γ=0.30, and the 4-knob tuning fix from a 3-agent code audit did not move them.** Phase 1d (behavior-cloning warm-start) is now being implemented as the pivot; **1d has not produced results yet — verdict pending**.
+
+### Phase 1b — γ=0.30 on A2C/PPO (does γ=0.3 generalize to on-policy?)
+
+6 runs (A2C, PPO × 3 seeds × 300k steps, R4), N=4 parallel, wall **43.3 min**. Driver `scripts/run_exp05b_parallel.py`, outputs `runs/exp05b/`.
+
+| algo | Collapse | Mean test_ret | Mean Sortino |
+|---|---|---|---|
+| A2C | **3/3** | −0.45% | −4.04 |
+| PPO | **3/3** | −0.14% | −0.64 |
+
+2 of the 6 runs hit FULL collapse (0 trades on val); the other 4 had val_trades 5–41, all below the 50-trade threshold (degenerate "do-nothing-with-noise"). **γ=0.3 does NOT transfer to on-policy.** Zhang/Zohren/Roberts 2019 claimed γ=0.3 works for A2C too, but their result does not reproduce here — the off-policy DDQN benefit (replay buffer decorrelates the target so a lower γ raises target SNR) has no on-policy analogue.
+
+### Phase 1c — 4-knob hyperparameter fix on A2C/PPO
+
+A 3-sub-agent code audit (independent reviewers, converged) diagnosed the root cause: **at γ=0.30 the on-policy advantage signal becomes pure noise, so the policy never moves.** Symptoms confirming the diagnosis: entropy stuck at ln(3)=1.099 (uniform random over {short, flat, long}), KL≈0, explained-variance≈0 — the actor never departs from its initialization. The audit prescribed 4 changes (applied inline by the driver, `config.yaml` NOT modified):
+
+| knob | old → new | rationale |
+|---|---|---|
+| `gae_lambda` | 0.95 → 1.0 | at γ=0.3, γ·λ=0.285 cuts the effective horizon to ~3 bars; pure Monte-Carlo returns needed |
+| `value_coef` | 0.5 → 0.25 | value MSE was ~99% of total loss, starving the policy head |
+| `entropy_coef` | 0.01 → 0.05 | more exploration pressure at the short horizon |
+| `ppo.n_epochs` | 10 → 4 | fewer SGD epochs over noisy advantages |
+
+6 runs (same matrix), N=4 parallel, wall **47.9 min**. Driver `scripts/run_exp05c_parallel.py`, outputs `runs/exp05c/`.
+
+| algo | Collapse | Mean test_ret |
+|---|---|---|
+| A2C | **3/3** | −0.46% |
+| PPO | **3/3** | −0.43% |
+
+**Still 3/3 collapse for both.** The 4-knob diagnosis was correct about the *mechanism* (noisy advantage → dead policy) but the fix was insufficient.
+
+### Why 1c was necessary but insufficient (this rules out "we just didn't tune enough")
+
+Phase 1c was not optional — it had to be run to eliminate the most parsimonious hypothesis ("the on-policy hyperparameters are merely mistuned at γ=0.3"). We tuned every internal lever that touches the advantage signal: γ itself (1b), the horizon (gae_lambda), the value/policy loss balance (value_coef), exploration (entropy_coef), and SGD aggressiveness (n_epochs). All five tried; collapse unchanged. **Conclusion: hyperparameter tuning alone cannot fix on-policy collapse here. The policy needs an EXTERNAL signal, not better-tuned internal gradients** — when the advantage is noise, no reweighting of a noise-driven gradient produces a directional policy. This is the on-policy analogue of the Exp-0 DDQN finding that exploration, not loss tuning, was the bottleneck.
+
+### Pivot — Phase 1d: behavior-cloning warm-start (COMPLETE — also collapses, mechanism shifted)
+
+2 of 3 brainstorm sub-agents independently recommended BC warm-start as the next move; iRDPG (Liu et al. AAAI 2020, `5587_13_8812`) reports ~4× improvement on CN futures with exactly this device, and its diagnosis matches ours: *"the agent can hardly learn an effective policy without adequate trials and errors."* A noisy advantage cannot bootstrap a policy from a uniform init — BC supplies the missing external directional signal so RL starts from a non-flat policy.
+
+Design: a daily hindsight expert (long at intraday lows, short at intraday highs, h=5-bar lookahead) provides labels for a cross-entropy auxiliary loss, annealed out as RL takes over. New file `src/expert.py`. Modified `src/a2c.py`, `src/ppo.py` (`bc_coef` + CE aux loss + anneal), `src/train_a2c.py`, `src/train_ppo.py`, `config.yaml` (`bc:` block). Driver `scripts/run_exp05d_parallel.py`.
+
+**Phase 1d result (6 runs, A2C/PPO × 3 seeds, 300k, 48.4 min): still 6/6 collapse, val_trades=0, test_ret=0.0000, Sortino 0.00 for every run.** But the failure *mechanism is different and informative*:
+
+| Phase | A2C collapse | PPO collapse | entropy H | trades trend (train) |
+|---|---|---|---|---|
+| 1b (γ=0.3) | 3/3 | 3/3 | stuck at ln3≈1.099 | high but losing / random |
+| 1c (+4-knob) | 3/3 | 3/3 | stuck at ln3≈1.099 | same |
+| **1d (+BC)** | **3/3** | **3/3** | **drops 1.099 → 0.10–0.14 (A2C) / 0.03 (PPO)** | **636 → 49 → 37 → 15 (a2c_s42); 636 → 44 → 7 → 3 (ppo_s42)** |
+
+BC *did* work in the narrow sense it was designed for: the uniform-random collapse is gone — entropy drops sharply and the policy commits. **But it commits to flat.** The hindsight expert at h=5, noise_threshold=0.0005 is ~63–70% flat (verified in `src/expert.py` smoke test), so the cross-entropy loss converges the policy to the majority class. After `bc_coef` anneals to 0 (step 100k), the pure-RL phase (γ=0.3, noisy advantage — the *unchanged* Phase 1b/1c problem) cannot pull the policy off flat. Train trades decay monotonically toward single digits; eval (deterministic argmax) is flat from the very first eval at step 30k. Confirmed by per-episode trace: H keeps falling and trades keep falling all the way to step 299k.
+
+**Deeper diagnosis (the real finding of Exp 0.5b/c/d):** the on-policy collapse is not an exploration problem, not an initialization problem, and not a hyperparameter problem. It is a **credit-assignment problem** — under γ=0.3 with M1 sparse net-of-spread reward, on-policy methods have no learning signal that makes *trading* positive-EV relative to *flat*. Whether the policy starts uniform (1b/1c) or is warm-started toward the expert (1d), it ends at "don't trade" because that is the only locally-stable behavior the noisy advantage will not punish. DDQN (off-policy, replay-buffered, value-based) is structurally immune and remains the working baseline at γ=0.30.
+
+**Two bugs found and fixed during 1c/1d setup:**
+
+1. **cp874 encoding crash (1b/1c).** Scripts that `print()` Greek letters (γ) crash with `UnicodeEncodeError` under cp874 when run as a background subprocess on this Thai-locale Windows box. Fix: ASCII-only `print()` (write "gamma", not "γ") + set `PYTHONIOENCODING=utf-8` in the subprocess env. (Saved to auto-memory `feedback_cp874_encoding.md`; this is an operational gotcha for driver scripts, not a project-spec insight.)
+2. **BC lr-too-small (1d smoke test).** The per-reward lr for R4 (A2C 1e-5, PPO 1e-6) is far too small for the BC cross-entropy loss (scale ~1.0) to move the policy — 200 updates at lr=1e-5 left entropy unchanged. Fix (Option 1, LR schedule): use a high lr during the BC phase (A2C 7e-4 / PPO 3e-4, the R1-scale defaults), linearly annealed down to the small RL lr by `bc_anneal_steps`, synchronized with `bc_coef → 0`. `config.yaml` now carries `bc.lr_bc`.
+
+### Next (decision point for the next session)
+
+Exp 0.5b/c/d are all complete and all negative for on-policy. Hyperparameter tuning (1b/1c) and BC warm-start (1d) both fail; the failure is now understood as structural credit-assignment, not a tuning miss. **Do not run more "tune another knob" or "more imitation" rounds without a new hypothesis** — that path is exhausted. Open options for the next session, in rough order of cost:
+
+1. **Class-balanced / weighted BC** (cheapest, ~10 LOC): the 1d failure is specifically that the expert is flat-majority. Re-weight the CE loss inversely to class frequency, or generate a less-flat expert (smaller `noise_threshold`, larger lookahead `h`). Tests whether 1d's *flat-commitment* (not BC itself) was the blocker. Highest-information cheapest next step.
+2. **VC-PPO decoupled critic λ** (PPO-only, ~30 LOC): one brainstorm agent flagged a decoupled value-target λ as a credit-assignment fix specifically for sparse-reward PPO. Narrower scope than #1.
+3. **Risk-sensitive / longer-horizon reformulation** or **switch the on-policy algo** to SAC-Discrete or Recurrent PPO (see `proposal/algorithm_extensions.md`). Largest scope; only if 1–2 fail.
+4. **Proceed Exp 1 DDQN-only** and document A2C/PPO as a characterized negative result (collapse is structural under this MDP/cost regime; full mechanism in this entry). This is a legitimate paper outcome — the project's required deliverable is the comparison, and "on-policy structurally fails here, off-policy works" with this depth of diagnosis is a finding, not a gap.
+
+DDQN stays the working baseline at γ=0.30. No on-policy γ default is set (every on-policy config tested collapses regardless of γ). The expert labeler (`src/expert.py`), BC plumbing (`bc:` config block, `bc_coef`/anneal in a2c/ppo), and the lr-schedule are all in place and correct — they are reusable as-is for option #1.
+
+---
+
 ## 2026-05-16 — Exp 0.5a COMPLETE: γ-sweep selects γ=0.30 for DDQN (collapse 0/3, +2.23% mean test_ret)
 
 ### Status snapshot

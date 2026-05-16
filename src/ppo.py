@@ -49,6 +49,8 @@ class PPOAgent:
         normalize_advantage: bool,
         device: torch.device,
         seed: int = 0,
+        bc_coef: float = 0.0,
+        bc_anneal_steps: int = 0,
     ):
         self.obs_dim = obs_dim
         self.n_actions = n_actions
@@ -65,6 +67,12 @@ class PPOAgent:
         self.normalize_advantage = bool(normalize_advantage)
         self.device = device
 
+        # BC warm-start (Phase 1d). bc_coef > 0 activates an auxiliary CE loss on
+        # expert action labels supplied per-bar in the rollout. Coefficient anneals
+        # linearly bc_coef -> 0 over bc_anneal_steps env steps.
+        self.bc_coef_initial = float(bc_coef)
+        self.bc_anneal_steps = int(bc_anneal_steps)
+
         torch.manual_seed(seed)
         self.net = ActorCritic(obs_dim, n_actions, hidden_sizes).to(device)
         self.optim = torch.optim.Adam(self.net.parameters(), lr=float(lr))
@@ -80,6 +88,14 @@ class PPOAgent:
         self.last_approx_kl: float = float("nan")
         self.last_clip_fraction: float = float("nan")
         self.last_n_epochs_run: int = 0
+        self.last_bc_loss: float = float("nan")
+        self.last_bc_coef: float = float("nan")
+
+    def _bc_coef(self, global_step: int) -> float:
+        if self.bc_coef_initial <= 0.0 or self.bc_anneal_steps <= 0:
+            return 0.0
+        frac = max(0.0, 1.0 - float(global_step) / float(self.bc_anneal_steps))
+        return self.bc_coef_initial * frac
 
     # ---- action selection (drop-in compatible with DDQN/A2C) ----
 
@@ -103,7 +119,8 @@ class PPOAgent:
 
     # ---- learning ----
 
-    def update(self, rollout: Rollout, last_value: float = 0.0) -> None:
+    def update(self, rollout: Rollout, last_value: float = 0.0,
+               global_step: int = 0) -> None:
         n = len(rollout)
         if n == 0:
             return
@@ -125,12 +142,21 @@ class PPOAgent:
         advantages_t = torch.as_tensor(advantages, dtype=torch.float32, device=self.device)
         returns_t = torch.as_tensor(returns, dtype=torch.float32, device=self.device)
 
-        # Diagnostics accumulators across all minibatches × epochs
+        # BC: assemble expert tensor and active mask once per rollout
+        bc_coef_now = self._bc_coef(global_step)
+        bc_active = bc_coef_now > 0.0 and len(rollout.expert_actions) == n
+        if bc_active:
+            expert_t = torch.as_tensor(rollout.expert_actions, dtype=torch.int64, device=self.device)
+        else:
+            expert_t = None
+
+        # Diagnostics accumulators across all minibatches x epochs
         pol_losses: list[float] = []
         val_losses: list[float] = []
         entropies: list[float] = []
         kls: list[float] = []
         clip_fracs: list[float] = []
+        bc_losses: list[float] = []
         epochs_run = 0
         stop_early = False
 
@@ -174,6 +200,18 @@ class PPOAgent:
 
                 loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
 
+                # BC auxiliary loss on the minibatch (if active and labels present)
+                bc_loss_val = float("nan")
+                if bc_active:
+                    expert_mb = expert_t[mb_t]
+                    bc_mask = expert_mb >= 0
+                    if int(bc_mask.sum().item()) > 0:
+                        bc_logits_mb = logits[bc_mask]
+                        bc_targets_mb = expert_mb[bc_mask]
+                        bc_loss = F.cross_entropy(bc_logits_mb, bc_targets_mb)
+                        loss = loss + bc_coef_now * bc_loss
+                        bc_loss_val = float(bc_loss.detach().item())
+
                 self.optim.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
@@ -190,6 +228,8 @@ class PPOAgent:
                 entropies.append(float(entropy.detach().item()))
                 kls.append(float(approx_kl.item()))
                 clip_fracs.append(float(clip_frac.item()))
+                if not (bc_loss_val != bc_loss_val):  # not NaN
+                    bc_losses.append(bc_loss_val)
 
             epochs_run = epoch + 1
             if self.target_kl is not None and len(kls) > 0:
@@ -208,6 +248,8 @@ class PPOAgent:
         self.last_approx_kl = float(np.mean(kls)) if kls else float("nan")
         self.last_clip_fraction = float(np.mean(clip_fracs)) if clip_fracs else float("nan")
         self.last_n_epochs_run = epochs_run
+        self.last_bc_loss = float(np.mean(bc_losses)) if bc_losses else float("nan")
+        self.last_bc_coef = bc_coef_now
 
         # Explained variance on the full rollout (one final forward pass for clarity)
         with torch.no_grad():

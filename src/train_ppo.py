@@ -19,8 +19,9 @@ import torch
 import yaml
 
 from a2c import Rollout
-from data import load_raw, select_window, split_days
+from data import iter_sessions, load_raw, select_window, split_days
 from env import RunningStd
+from expert import compute_expert_actions
 from features import build_features
 from ppo import PPOAgent
 from train import (
@@ -91,6 +92,28 @@ def train_ppo(cfg: dict) -> dict:
     capital0 = float(cfg["env"].get("capital", 10_000.0))
 
     ppo_cfg = cfg["ppo"]
+    bc_cfg = cfg.get("bc", {})
+    bc_coef = float(bc_cfg.get("coef", 0.0))
+    bc_anneal_steps = int(bc_cfg.get("anneal_steps", 0))
+    bc_h = int(bc_cfg.get("lookahead", 5))
+    bc_thresh = float(bc_cfg.get("noise_threshold", 0.0005))
+    bc_active = bc_coef > 0.0 and bc_anneal_steps > 0
+    # LR schedule (Option 1): high lr during BC phase, anneal to base RL lr.
+    rl_lr = float(ppo_cfg["lr"])
+    bc_lr_raw = bc_cfg.get("lr_bc")
+    bc_lr = float(bc_lr_raw) if (bc_active and bc_lr_raw is not None) else rl_lr
+
+    def _bc_lr_at(gstep: int) -> float:
+        if not bc_active or bc_anneal_steps <= 0:
+            return rl_lr
+        frac = min(1.0, max(0.0, float(gstep) / float(bc_anneal_steps)))
+        return bc_lr + (rl_lr - bc_lr) * frac
+
+    if bc_active:
+        action_space_list = list(cfg["env"]["action_space"])
+        print(f"BC warm-start: coef={bc_coef} anneal_steps={bc_anneal_steps} "
+              f"lookahead={bc_h} noise_thresh={bc_thresh} lr_bc={bc_lr} rl_lr={rl_lr}")
+
     agent = PPOAgent(
         obs_dim=obs_dim,
         n_actions=n_actions,
@@ -109,6 +132,8 @@ def train_ppo(cfg: dict) -> dict:
         normalize_advantage=bool(ppo_cfg["normalize_advantage"]),
         device=device,
         seed=seed,
+        bc_coef=bc_coef,
+        bc_anneal_steps=bc_anneal_steps,
     )
 
     best_metric = str(cfg["train"].get("best_metric", "sortino")).lower()
@@ -134,14 +159,29 @@ def train_ppo(cfg: dict) -> dict:
     ep_pnl_log: list[float] = []
     ep_equity: list[float] = []
     ep_ruin = False
+    cur_expert: np.ndarray | None = None
+    if bc_active:
+        try:
+            _, cur_day_df = next(iter_sessions(feat, [train_env.current_date]))
+            cur_expert = compute_expert_actions(cur_day_df, action_space_list,
+                                                h=bc_h, noise_threshold=bc_thresh)
+        except StopIteration:
+            cur_expert = None
+    ep_bar_idx = 0
 
     while step < total_timesteps:
         action, log_prob, value = agent.act_and_evaluate(obs)
         next_obs, reward, terminated, truncated, info = train_env.step(action)
         done = bool(terminated)
 
+        if cur_expert is not None and ep_bar_idx < len(cur_expert):
+            expert_a = int(cur_expert[ep_bar_idx])
+        else:
+            expert_a = -1
+
         rollout.add(obs, action, log_prob, value, reward, done,
-                    next_position=float(info["next_position"]))
+                    next_position=float(info["next_position"]),
+                    expert_action=expert_a)
         ep_pnl_log.append(float(info["pnl_log"]))
         ep_equity.append(float(info["equity"]))
         if info.get("ruin", False):
@@ -149,9 +189,14 @@ def train_ppo(cfg: dict) -> dict:
 
         obs = next_obs
         step += 1
+        ep_bar_idx += 1
 
         if terminated or truncated:
-            agent.update(rollout, last_value=0.0)
+            if bc_active:
+                cur_lr = _bc_lr_at(step)
+                for pg in agent.optim.param_groups:
+                    pg["lr"] = cur_lr
+            agent.update(rollout, last_value=0.0, global_step=step)
             train_episodes_done += 1
             gs = step
             epoch_idx = (train_episodes_done - 1) // sessions_per_epoch + 1
@@ -186,6 +231,9 @@ def train_ppo(cfg: dict) -> dict:
                 tb_writer.add_scalar("train/n_epochs_run", agent.last_n_epochs_run, gs)
                 if not math.isnan(agent.last_explained_var):
                     tb_writer.add_scalar("train/explained_variance", agent.last_explained_var, gs)
+                if bc_active and not math.isnan(agent.last_bc_loss):
+                    tb_writer.add_scalar("train/bc_loss", agent.last_bc_loss, gs)
+                    tb_writer.add_scalar("train/bc_coef", agent.last_bc_coef, gs)
 
             with metrics_path.open("a", newline="", encoding="utf-8") as fh:
                 csv.writer(fh).writerow(_row_from_metrics(train_episodes_done, gs, epoch_idx, "train", m))
@@ -203,6 +251,7 @@ def train_ppo(cfg: dict) -> dict:
             ep_pnl_log = []
             ep_equity = []
             ep_ruin = False
+            ep_bar_idx = 0
 
             if train_episodes_done % eval_every_sessions == 0:
                 eval_count += 1
@@ -257,6 +306,13 @@ def train_ppo(cfg: dict) -> dict:
                     early_stop = True
 
             obs, _ = train_env.reset()
+            if bc_active:
+                try:
+                    _, cur_day_df = next(iter_sessions(feat, [train_env.current_date]))
+                    cur_expert = compute_expert_actions(cur_day_df, action_space_list,
+                                                        h=bc_h, noise_threshold=bc_thresh)
+                except StopIteration:
+                    cur_expert = None
             if early_stop:
                 break
 

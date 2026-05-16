@@ -69,12 +69,14 @@ class Rollout:
     rewards: list[float] = field(default_factory=list)
     dones: list[bool] = field(default_factory=list)
     next_positions: list[float] = field(default_factory=list)
+    expert_actions: list[int] = field(default_factory=list)  # for BC loss; -1 if absent
 
     def __len__(self) -> int:
         return len(self.obs)
 
     def add(self, obs: np.ndarray, action: int, log_prob: float, value: float,
-            reward: float, done: bool, next_position: float) -> None:
+            reward: float, done: bool, next_position: float,
+            expert_action: int = -1) -> None:
         self.obs.append(obs.copy())
         self.actions.append(int(action))
         self.log_probs.append(float(log_prob))
@@ -82,6 +84,7 @@ class Rollout:
         self.rewards.append(float(reward))
         self.dones.append(bool(done))
         self.next_positions.append(float(next_position))
+        self.expert_actions.append(int(expert_action))
 
 
 def compute_gae(
@@ -134,6 +137,8 @@ class A2CAgent:
         normalize_advantage: bool,
         device: torch.device,
         seed: int = 0,
+        bc_coef: float = 0.0,
+        bc_anneal_steps: int = 0,
     ):
         self.obs_dim = obs_dim
         self.n_actions = n_actions
@@ -145,6 +150,12 @@ class A2CAgent:
         self.normalize_advantage = bool(normalize_advantage)
         self.device = device
 
+        # BC warm-start (Phase 1d). bc_coef > 0 activates an auxiliary cross-entropy
+        # loss on expert action labels supplied in the rollout. Coefficient anneals
+        # linearly from bc_coef -> 0 over bc_anneal_steps env steps.
+        self.bc_coef_initial = float(bc_coef)
+        self.bc_anneal_steps = int(bc_anneal_steps)
+
         torch.manual_seed(seed)
         self.net = ActorCritic(obs_dim, n_actions, hidden_sizes).to(device)
         self.optim = torch.optim.Adam(self.net.parameters(), lr=float(lr))
@@ -155,6 +166,8 @@ class A2CAgent:
         self.last_entropy: float = float("nan")
         self.last_total_loss: float = float("nan")
         self.last_explained_var: float = float("nan")
+        self.last_bc_loss: float = float("nan")
+        self.last_bc_coef: float = float("nan")
 
     # ---- action selection ----
 
@@ -198,12 +211,20 @@ class A2CAgent:
 
     # ---- learning ----
 
-    def update(self, rollout: Rollout, last_value: float = 0.0) -> None:
+    def _bc_coef(self, global_step: int) -> float:
+        """Linear-anneal BC coefficient from bc_coef_initial -> 0 over bc_anneal_steps.
+        Returns 0.0 if bc_coef_initial == 0 or after anneal completes."""
+        if self.bc_coef_initial <= 0.0 or self.bc_anneal_steps <= 0:
+            return 0.0
+        frac = max(0.0, 1.0 - float(global_step) / float(self.bc_anneal_steps))
+        return self.bc_coef_initial * frac
+
+    def update(self, rollout: Rollout, last_value: float = 0.0,
+               global_step: int = 0) -> None:
         """One gradient step on the combined A2C loss for the whole rollout.
 
-        Combined loss: L = −E[A · logπ] + value_coef · MSE(V, R) − entropy_coef · H(π)
-          where A is advantage (optionally normalized), R is the discounted return
-          (computed as A + V_old), and H is the policy's entropy.
+        Combined loss: L = -E[A * logpi] + value_coef * MSE(V, R) - entropy_coef * H(pi)
+                         + bc_coef(step) * CE(pi(s), a_expert)   [if expert actions present]
         """
         if len(rollout) == 0:
             return
@@ -236,6 +257,20 @@ class A2CAgent:
         value_loss = F.mse_loss(values_new, returns_t)
         loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
 
+        # BC auxiliary loss (only if expert actions present AND bc_coef > 0 at this step)
+        bc_coef_now = self._bc_coef(global_step)
+        bc_loss_val = float("nan")
+        if bc_coef_now > 0.0 and len(rollout.expert_actions) == len(rollout.obs):
+            expert_t = torch.as_tensor(rollout.expert_actions, dtype=torch.int64, device=self.device)
+            # Filter out -1 (no-expert) entries
+            mask = expert_t >= 0
+            if int(mask.sum().item()) > 0:
+                bc_logits = logits[mask]
+                bc_targets = expert_t[mask]
+                bc_loss = F.cross_entropy(bc_logits, bc_targets)
+                loss = loss + bc_coef_now * bc_loss
+                bc_loss_val = float(bc_loss.detach().item())
+
         self.optim.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
@@ -246,6 +281,8 @@ class A2CAgent:
         self.last_value_loss = float(value_loss.detach().item())
         self.last_entropy = float(entropy.detach().item())
         self.last_total_loss = float(loss.detach().item())
+        self.last_bc_loss = bc_loss_val
+        self.last_bc_coef = bc_coef_now
         # Explained variance: 1 − Var(R − V) / Var(R). Useful sanity check.
         with torch.no_grad():
             var_returns = returns_t.var()

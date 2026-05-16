@@ -125,6 +125,25 @@ ppo:
   target_kl: null                # null = no early-stop; set ~0.015 to stop epochs when KL exceeds
   normalize_advantage: true
 
+# BC warm-start (Phase 1d, PROPOSAL Sec. 8). When `coef > 0` AND `anneal_steps > 0`,
+# A2C/PPO trainers compute a daily-hindsight expert action per bar (lookahead = `lookahead`
+# bars; noise threshold = `noise_threshold` fractional) and add a cross-entropy auxiliary
+# loss CE(pi(s), a_expert) to the policy gradient. Coefficient linearly anneals from
+# `coef` -> 0 over `anneal_steps` env steps. DDQN does NOT use BC.
+bc:
+  coef: 0.0                 # 0 = OFF; Phase 1d default = 1.0
+  anneal_steps: 0           # 0 = OFF; Phase 1d default = 100_000 (1/3 of 300k training)
+  lookahead: 5              # h bars of hindsight (matches gamma=0.3 effective horizon)
+  noise_threshold: 0.0005   # fractional move below which expert is "flat"
+  # LR schedule (Option 1, 2026-05-16): BC cross-entropy loss is ~scale 1.0, so the
+  # tiny R2/R4 lr (1e-5/1e-6, tuned for dollar-scale RL gradients) cannot move the
+  # policy during the BC phase (smoke test: 200 updates @ lr=1e-5 left H at ln(3)).
+  # When bc is active, the trainer uses `lr_bc` while step < anneal_steps, then
+  # linearly anneals lr down to the section's base `lr` (the small RL lr) by
+  # `anneal_steps`, synchronized with bc_coef -> 0. If lr_bc is null, the section
+  # base lr is used (no schedule) -- only sensible when base lr is already large.
+  lr_bc: null               # Phase 1d: a2c=7.0e-4, ppo=3.0e-4 (R1-scale; set per-algo in driver)
+
 train:
   total_timesteps: 500000
   eval_every_sessions: 22    # eval every N completed train sessions (1 session = 1 trading day). 22 = ~every 2 epochs (sessions_per_epoch=88 for inner-CV/600 for full train)
