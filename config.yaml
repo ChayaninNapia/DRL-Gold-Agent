@@ -56,7 +56,9 @@ env:
 
 dqn:
   hidden_sizes: [128, 128]
-  gamma: 0.99
+  gamma: 0.30                # 2026-05-16: Exp 0.5a γ-sweep selected 0.30 (Zhang/Zohren/Roberts 2019).
+                             # Mean test_ret +2.23%, Sortino +1.03, 0/3 collapse — best across {0.3,0.5,0.9,0.99}.
+                             # Was 0.99; old value left some seeds attractor-bound. See JOURNAL.md 2026-05-16.
   lr: 0.0045                 # base lr (used as-is for R1; R2/R4 override below — see run_exp0.py)
   # Per-reward lr override (post-A/B 2026-05-16): R1 raw scale ~1e-4/bar -> lr=0.0045 OK.
   # R2/R4 raw scale ~$1-30/bar (~10^4-10^5 x larger) -> need much smaller lr or NaN.

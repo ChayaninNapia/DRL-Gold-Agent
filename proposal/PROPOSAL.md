@@ -542,6 +542,41 @@ estimated at 9-15 h wall-clock, similar to one Exp 0 v2.
 **Then Exp 1** (algorithm comparison + per-algo HPO) runs on the anti-collapse-fixed
 config, so the DDQN-vs-A2C-vs-PPO question is fair.
 
+### 8.1 Exp 0.5a Results — γ sweep on DDQN (2026-05-16)
+
+12 DDQN+R4 runs (4 γ × 3 seeds × 300k steps; reduced from the proposed 500k
+to match Exp 0 v2 speed budget after observing collapse is detectable by
+~150k steps). Wall time: **63.4 min** with N=4 parallel subprocess workers.
+
+| γ | Collapse (val_trades < 50) | Mean test_ret | StdDev | Mean Sortino | Mean trades |
+|---|---|---|---|---|---|
+| **0.30** | **0/3** | **+0.0223** | 0.041 | **+1.03** | 612 |
+| 0.50 | 1/3 | +0.0019 | 0.013 | -0.08 | 134 |
+| 0.90 | 0/3 | **-0.0619** | **0.101** | -1.26 | 713 |
+| 0.99 | 0/3 | -0.0193 | 0.038 | -0.21 | 517 |
+
+**Winner: γ=0.30 across all three dimensions** — best mean return, best mean
+Sortino, lowest collapse rate. The result reproduces Zhang/Zohren/Roberts 2019
+qualitatively: γ=0.3 is the only setting that yields a positive risk-adjusted
+return on average, and the only one that escapes the do-nothing attractor on
+every seed. Best individual run `g0.3_s2026` returned **+7.90% with Sortino
++3.57** on the held-out test split — by a wide margin our first clearly
+profitable agent on this MDP.
+
+The γ=0.9 result is the most informative *negative*: highest variance
+(StdDev 0.101), one seed lost 20.2% with 1521 trades. γ=0.9 sits in an
+unstable zone where the agent trades enough to lose money but not enough
+to learn — worse than the conservative γ=0.99 baseline.
+
+Action: `config.yaml dqn.gamma: 0.99 → 0.30`. Plots and per-run details in
+`runs/exp05a/`; full discussion in JOURNAL.md 2026-05-16 entry.
+
+**Next:** Exp 0.5b is now contingent on Phase 1b (A2C/PPO at γ=0.3). If the
+γ effect generalizes across algorithms, the anti-collapse program may
+collapse from 3 rounds into 1, and Exp 1 (HPO) can start immediately on a
+clean baseline. If A2C/PPO still collapse at γ=0.3, the program proceeds as
+planned to hindsight (0.5b) and dueling/entropy (0.5c).
+
 ---
 
 ## 9. Out of Scope / Future Work

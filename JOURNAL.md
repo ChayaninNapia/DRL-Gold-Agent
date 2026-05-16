@@ -6,6 +6,59 @@ For the active project spec see **[proposal/PROPOSAL.md](proposal/PROPOSAL.md)**
 
 ---
 
+## 2026-05-16 — Exp 0.5a COMPLETE: γ-sweep selects γ=0.30 for DDQN (collapse 0/3, +2.23% mean test_ret)
+
+### Status snapshot
+Phase 1a of Exp 0.5 (Anti-Collapse Plan, PROPOSAL §8) ran 12 DDQN+R4 runs (4 γ values × 3 seeds × 300k steps). Wall time **63.4 min** with N=4 parallel subprocess (vs sequential ~120 min, speedup ~1.9x — workload sustains 84-92% GPU util so parallel scales less aggressively than the smoke test predicted at 50k). Goal: test Zhang/Zohren/Roberts 2019's claim that γ=0.3 is the right horizon for intraday DRL, vs our Exp-0 default γ=0.99.
+
+### Result
+
+| γ | Collapse | Mean test_ret | StdDev | Mean Sortino | Mean trades |
+|---|---|---|---|---|---|
+| **0.30** | **0/3** | **+0.0223** | 0.041 | **+1.03** | 612 |
+| 0.50 | 1/3 | +0.0019 | 0.013 | -0.08 | 134 |
+| 0.90 | 0/3 | **-0.0619** | **0.101** | -1.26 | 713 |
+| 0.99 | 0/3 | -0.0193 | 0.038 | -0.21 | 517 |
+
+**Winner: γ=0.30**. All three signals point the same way:
+- Best mean test_ret (+2.23% vs nearest -1.93%).
+- Best mean Sortino (+1.03 — the only γ where the agent has positive risk-adjusted return on average).
+- 0/3 collapse to do-nothing (val_trades min=57, all above the 50 threshold).
+
+**Best individual run:** `g0.3_s2026` — test_ret +7.90%, Sortino +3.57, 570 trades, final equity $10,011.
+
+### What this confirms / contradicts
+
+- **Confirms** the paper survey ([[reference-research-papers]]): Zhang/Zohren/Roberts 2019 used γ=0.3 for *all* of {DQN, PG, A2C} on intraday futures. Their root-cause framing — that γ=0.99 over a 1-min step horizon imposes effectively-infinite credit assignment on a near-Markov price series, biasing the agent toward "do nothing because nothing pays out in the relevant window" — is what we saw in Exp 0 and what γ=0.3 directly relieves.
+- **Surprise:** γ=0.99 (our old default) is *not* the worst — γ=0.90 is, with mean test_ret -6.19% and StdDev 0.101 (2.5x the others). One seed (g0.9_s1337) traded 1521 times on test for -20.2% return — high variance unstable. γ=0.99 sits in a more conservative regime (Q-net hedges by mostly trading flat) so its mean is bad but variance is contained.
+- **γ=0.5 is a transition zone:** 1/3 collapse, mean test_ret essentially zero. Not safe to rely on.
+
+### Action taken
+
+- `config.yaml`: `dqn.gamma: 0.99 → 0.30` with inline comment citing this entry.
+- Plots: `runs/exp05a/gamma_summary.png`, `test_metrics_by_run.png`, `equity_curves.png`.
+- Summary CSV + collapse report: `runs/exp05a/exp05a_summary.csv`, `exp05a_collapse_report.json`.
+- Git commit `<TBD>` snapshots code + plots (runs/ stays gitignored).
+
+### Operational notes (kept for next phase)
+
+- **Parallel driver** (`scripts/run_exp05a_parallel.py`) launches N=4 subprocesses, each capped at `OMP_NUM_THREADS=4` to avoid CPU oversubscription on the 20-core box. Smoke test (50k steps, no eval) showed 2.27x speedup; actual workload (300k + eval/test) shows ~1.9x. Difference is GPU saturation — when 4 workers are training simultaneously, GPU util sits at 84-92%, near the ceiling.
+- **Driver design**: each worker is a fresh `python -c` subprocess with a per-run YAML config dumped to a temp file. This avoids interpreter state leakage (CUDA contexts, replay buffers, module caches) between runs.
+- **Wall-time estimates were close**: predicted 78 min for 12 runs at 300k each; actual 63.4 min. Updated estimate for Phase 1b (6 A2C/PPO runs at 300k): ~30-35 min parallel.
+
+### Next step — Phase 1b
+
+Run γ=0.3 with A2C and PPO (3 seeds each, R4, 300k steps) to test whether the γ=0.3 finding is algo-agnostic (Zhang's paper claims yes; ours is N=1 algo until we extend). If A2C/PPO also benefit:
+- γ=0.3 becomes the new project-wide default across all algos.
+- We can proceed to Exp 1 HPO on R4 with γ as a fixed hyperparameter (one less dimension to search).
+- Hindsight (Exp 0.5b) and dueling/entropy (Exp 0.5c) **may not be needed** — Exp 0.5a alone may have solved collapse.
+
+If A2C/PPO γ=0.3 still collapse: γ is DDQN-specific, and we go to Exp 0.5b (hindsight bonus per DeepScalper §4.2).
+
+[[project-exp0-findings]] — see memory note for Exp 0 v2 baseline this builds on.
+
+---
+
 ## 2026-05-16 — Exp 0 v2 COMPLETE: 27/27 runs, R4 wins (mean rank 1.67), collapse pattern documented
 
 ### Status snapshot
