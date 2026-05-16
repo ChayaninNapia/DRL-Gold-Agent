@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -rf hpo_a2c_aggressive_* hpo/a2c hpo_a2c.log hpo_a2c_timing.txt)",
+      "Bash(rm -rf _tb/hpo_a2c_aggressive_*)",
+      "Bash(d:/EA/.venv/Scripts/python.exe d:/EA/scripts/run_ab_reward_norm.py)",
+      "Bash(d:/EA/.venv/Scripts/python.exe -c ' *)",
+      "Bash(d:/EA/.venv/Scripts/python.exe d:/EA/scripts/plot_exp0.py)"
+    ]
+  }
+}

@@ -1,0 +1,1787 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+  <head>
+  <link href="http://gmpg.org/xfn/11" rel="profile">
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+  <title>
+    
+      The 37 Implementation Details of Proximal Policy Optimization &middot; The ICLR Blog Track
+    
+  </title>
+
+  
+  <link rel="canonical" href="https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/">
+  
+
+  <link rel="stylesheet" href="https://iclr-blog-track.github.io/public/css/poole.css">
+  <link rel="stylesheet" href="https://iclr-blog-track.github.io/public/css/syntax.css">
+  <link rel="stylesheet" href="https://iclr-blog-track.github.io/public/css/lanyon.css">
+  <link rel="stylesheet" href="https://iclr-blog-track.github.io/public/css/custom.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=PT+Serif:400,400italic,700%7CPT+Sans:400">
+
+  <link rel="apple-touch-icon-precomposed" sizes="144x144" href="https://iclr-blog-track.github.io/public/apple-touch-icon-precomposed.png">
+  <link rel="shortcut icon" href="https://iclr-blog-track.github.io/public/favicon.ico">
+
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="https://iclr-blog-track.github.io/atom.xml">
+
+  
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML" type="text/javascript" ></script>
+ <!-- <script type="text/x-mathjax-config"> MathJax.Hub.Config({ TeX: { equationNumbers: { autoNumber: "AMS" } } }); </script> -->
+  <script type="text/x-mathjax-config">
+      MathJax.Hub.Config({
+        tex2jax: { inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+         processEscapes: false
+        }
+      });
+</script>
+</head>
+
+
+  <body>
+
+    <!-- Target for toggling the sidebar `.sidebar-checkbox` is for regular
+     styles, `#sidebar-checkbox` for behavior. -->
+<input type="checkbox" class="sidebar-checkbox" id="sidebar-checkbox">
+<!-- <input type="checkbox" class="sidebar-checkbox" id="sidebar-checkbox" > -->
+
+<!-- Toggleable sidebar -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-item">
+    <p>For short-term, peer-sourced tests of time, generalizations, specializations, reproductions, etc.!</p>
+  </div>
+
+  <nav class="sidebar-nav">
+
+    <a class="sidebar-nav-item" href="/blog">Blog posts</a>
+
+    
+
+    
+    
+      
+    
+      
+      
+        
+      
+      
+    
+      
+      
+        
+          <a class="sidebar-nav-item" href="https://iclr-blog-track.github.io/about/">About</a>
+        
+      
+      
+    
+      
+      
+      
+    
+      
+      
+      
+    
+      
+      
+        
+      
+      
+    
+      
+      
+        
+          <a class="sidebar-nav-item" href="https://iclr-blog-track.github.io/home/">ICLR 2022 Blog Track</a>
+        
+      
+      
+    
+      
+      
+        
+          <a class="sidebar-nav-item" href="https://iclr-blog-track.github.io/submitting/">Submitting</a>
+        
+      
+      
+    
+      
+      
+        
+          <a class="sidebar-nav-item" href="https://iclr-blog-track.github.io/tags/">Tags</a>
+        
+      
+      
+    
+
+    <a class="sidebar-nav-item" href="https://github.com/iclr-blog-track/iclr-blog-track.github.io">GitHub project</a>
+    <span class="sidebar-nav-item">Currently vICLR Spring 2022</span>
+  </nav>
+
+  <div class="sidebar-item">
+    <p>
+      &copy; 2024. All rights reserved.
+    </p>
+  </div>
+</div>
+
+
+    <!-- Wrap is the content to shift when toggling the sidebar. We wrap the
+         content to avoid any CSS collisions with our real content. -->
+    <div class="wrap">
+      <div class="masthead">
+        <div class="container">
+          <h3 class="masthead-title">
+            <a href="/" title="Home">The ICLR Blog Track</a>
+            <span>&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+            <small></small>
+            <a href="/blog" title="Home">Blog Posts</a>
+          </h3>
+        </div>
+      </div>
+
+      <div class="container content">
+        <div class="post">
+  <h1 id="iclr-post-title" class="post-title">The 37 Implementation Details of Proximal Policy Optimization</h1>
+  <span class="post-date">25 Mar 2022 | 
+    <a class="content-tag" href="/tags/#proximal-policy-optimization"> proximal-policy-optimization </a>
+  
+    <a class="content-tag" href="/tags/#reproducibility"> reproducibility </a>
+  
+    <a class="content-tag" href="/tags/#reinforcement-learning"> reinforcement-learning </a>
+  
+    <a class="content-tag" href="/tags/#implementation-details"> implementation-details </a>
+  
+    <a class="content-tag" href="/tags/#tutorial"> tutorial </a>
+  </span>
+
+  <span id="iclr-post-authors" class="post-date">Huang, Shengyi; Dossa, Rousslan Fernand Julien; Raffin, Antonin; Kanervisto, Anssi; Wang, Weixun</span>
+  <p>Jon is a first-year master’s student who is interested in reinforcement learning (RL). In his eyes, RL seemed fascinating because he could use RL libraries such as <a href="https://github.com/DLR-RM/stable-baselines3">Stable-Baselines3 (SB3)</a> to train agents to play all kinds of games.
+He quickly recognized Proximal Policy Optimization (PPO) as a fast and versatile algorithm and wanted to implement PPO himself as a learning experience. Upon reading the paper, Jon thought to himself, “huh, this is pretty straightforward.” He then opened a code editor and started writing PPO.
+<code class="language-plaintext highlighter-rouge">CartPole-v1</code> from Gym was his chosen simulation environment, and before long, Jon made PPO work with <code class="language-plaintext highlighter-rouge">CartPole-v1</code>. He had a great time and felt motivated to make his PPO work with more interesting environments, such as the Atari games and MuJoCo robotics tasks. “How cool would that be?” he thought.</p>
+
+<p>However, he soon struggled. Making PPO work with Atari and MuJoCo seemed more challenging than anticipated. Jon then looked for reference implementations online but was shortly overwhelmed: unofficial repositories all appeared to do things differently, whereas he just could not read the Tensorflow <code class="language-plaintext highlighter-rouge">1.x</code> code in the official repo. Fortunately, Jon stumbled across two recent papers that explain PPO’s implementations. “This is it!” he grinned.
+Failing to control his excitement, Jon started running around in the office, accidentally bumping into Sam, whom Jon knew was working on RL. They then had the following conversation:</p>
+
+<style>
+.detail-label {
+	display: inline-block;
+	padding: 0 7px;
+	font-size: 12px;
+	line-height: 18px;
+	border: 1px solid transparent;
+	border-radius: 2em;
+	color: rgb(255, 255, 255);
+	position: relative;
+	bottom: 0.5ex;
+}
+
+.green-label {
+    background-color: rgb(0, 134, 114);
+}
+
+.blue-label {
+    background-color: rgb(45, 160, 240);
+}
+
+.red-label {
+    background-color: rgb(255, 52, 75);
+}
+
+.yellow-label{
+    background-color: rgb(255, 190, 55);
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    image-rendering: -webkit-optimize-contrast;
+}
+
+.pseudocode {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    max-width: 800px;
+}
+</style>
+
+<ul>
+  <li>“Hey, I just read the <em>implementation details matter</em> paper and the <em>what matters in on-policy RL</em> paper. Fascinating stuff. I knew PPO wasn’t that easy!” Jon exclaimed.</li>
+  <li>“Oh yeah! PPO is tricky, and I love these two papers that dive into the nitty-gritty details.” Sam answered.</li>
+  <li>“Indeed. I feel I understand PPO much better now. You have been working with PPO, right? Quiz me on PPO!” Jon inquired enthusiastically.</li>
+  <li>“Sure. If you run the official PPO with the Atari game Breakout, the agent would get ~400 game scores in about 4 hours. Do you know how does PPO achieve that?”</li>
+  <li>“Hmm… That’s actually a good question. I don’t think the two papers explain that.”</li>
+  <li>“The procgen paper contains experiments conducted using the official PPO with LSTM. Do you know how does PPO + LSTM work?”</li>
+  <li>“Ehh… I haven’t read too much on PPO + LSTM” Jon admitted.</li>
+  <li>“The official PPO also works with <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action space where you can use multiple discrete values to describe an action. Do you know how that works?”</li>
+  <li>“…” Jon, speechless.</li>
+  <li>“Lastly, if you have only the standard tools (e.g., <code class="language-plaintext highlighter-rouge">numpy, gym...</code>) and a neural network library (e.g., <code class="language-plaintext highlighter-rouge">torch, jax,...</code>), could you code up PPO from scratch?”</li>
+  <li>“Ooof, I guess it’s going to be difficult. Prior papers analyzed PPO implementation details but didn’t show how these pieces are coded together. Also, I now realize their conclusions are in MuJoCo tasks and do not necessarily transfer to other games such as Atari. I feel sad now…” Jon sighed.</li>
+  <li>“Don’t feel bad. PPO is just a complicated beast. If anything helps, I have been making video tutorials on implementing PPO from scratch and a blog post explaining things in more depth!”</li>
+</ul>
+
+<p><img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//meme3.png" style="margin-left: auto; margin-right: auto;" /></p>
+
+<p>And the blog post is here! Instead of doing ablation studies and making recommendations on which details matter, this blog post takes a step back and focuses on reproductions of PPO’s results in all accounts. Specifically, this blog post complements prior work in the following ways:</p>
+
+<ol>
+  <li><strong>Genealogy Analysis:</strong> we establish what it means to reproduce the <strong>official PPO implementation</strong> by examining its historical revisions in the <code class="language-plaintext highlighter-rouge">openai/baselines</code> GitHub repository (the official repository for PPO). As we will show, the code in the <code class="language-plaintext highlighter-rouge">openai/baselines</code> repository has undergone several refactorings which could produce different results from the original paper. So it is important to recognize <em>which version</em> of the official implementation is worth studying.</li>
+  <li><strong>Video Tutorials and Single-file Implementations:</strong> we make video tutorials on re-implementing PPO in PyTorch from scratch, matching details in the official PPO implementation to handle classic control tasks, Atari games, and MuJoCo tasks. Notably, we adopt single-file implementations in our code base, making the code quicker and easier to read. The videos are shown below:</li>
+</ol>
+<div class="grid-container">
+<iframe style="margin: 30px;" width="350" height="197" src="https://www.youtube.com/embed/MEt6rrxH8W4" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>
+<iframe style="margin: 30px;" width="350" height="197" src="https://www.youtube.com/embed/05RMTj-2K_Y" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>
+<iframe style="margin: 30px;" width="350" height="197" src="https://www.youtube.com/embed/BvZvx7ENZBw" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>
+</div>
+<ol>
+  <li><strong>Implementation Checklist with References:</strong> During our re-implementation, we have compiled an implementation checklist containing 37 details as follows. For each implementation detail, we display the permanent link to its code (which is not done in academic papers) and point out its literature connection.
+    <ul>
+      <li>13 core implementation details</li>
+      <li>9 Atari specific implementation details</li>
+      <li>9 implementation details for robotics tasks (with continuous action spaces)</li>
+      <li>5 LSTM implementation details</li>
+      <li>1 <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action spaces implementation detail</li>
+    </ul>
+  </li>
+  <li><strong>High-fidelity Reproduction:</strong> To validate our re-implementation, we show that the empirical results of our implementation match closely with those of the original, in classic control tasks, Atari games, MuJoCo tasks, LSTM, and Real-time Strategy (RTS) game tasks.</li>
+  <li><strong>Situational Implementation Details:</strong> We also cover 4 implementation details not used in the official implementation but potentially useful on special occasions.</li>
+</ol>
+
+<p>Our ultimate purpose is to help people understand the PPO implementation through and through, reproduce past results with high fidelity, and facilitate customization for new research. To make research reproducible, we have made source code available at <a href="https://github.com/vwxyzjn/ppo-implementation-details">https://github.com/vwxyzjn/ppo-implementation-details</a> and the tracked experiments available at <a href="https://wandb.ai/vwxyzjn/ppo-details">https://wandb.ai/vwxyzjn/ppo-details</a></p>
+
+<h1 id="background">Background</h1>
+
+<p>PPO is a policy gradient algorithm proposed by <a href="#Schulman2017">Schulman et al., (2017)</a>. As a refinement to Trust Region Policy Optimization (TRPO) (<a href="#Schulman2015">Schulman et al., 2015</a>), PPO uses a simpler clipped surrogate objective, omitting the expensive second-order optimization presented in TRPO. Despite this simpler objective, <a href="#Schulman2017">Schulman et al., (2017)</a> show PPO has higher sample efficiency than TRPO in many control tasks. PPO also has good empirical performance in the arcade learning environment (ALE) which contain Atari games.</p>
+
+<p>To facilitate more transparent research, <a href="#Schulman2017">Schulman et al., (2017)</a> have made the source code of PPO available in the <code class="language-plaintext highlighter-rouge">openai/baselines</code> GitHub repository with the code name <code class="language-plaintext highlighter-rouge">pposgd</code> (commit <a href="https://github.com/openai/baselines/tree/da997060461e3cbf54ca4dc7a67081a731fb6b3b/baselines/pposgd">da99706</a> on 7/20/2017). Later, the <code class="language-plaintext highlighter-rouge">openai/baselines</code> maintainers have introduced a series of revisions. The key events include:</p>
+
+<ol>
+  <li>11/16/2017, commit <a href="https://github.com/openai/baselines/tree/2dd7d307d7d163a02b37c87c62b7949af02d99ad/baselines/ppo2">2dd7d30</a>: the maintainers introduced a refactored version <code class="language-plaintext highlighter-rouge">ppo2</code> and renamed <code class="language-plaintext highlighter-rouge">pposgd</code> to <code class="language-plaintext highlighter-rouge">ppo1</code>. According to a <a href="https://github.com/openai/baselines/issues/485#issuecomment-413722708">GitHub issue</a>, one maintainer suggests <code class="language-plaintext highlighter-rouge">ppo2</code> should offer better GPU utilization by batching observations from multiple simulation environments.</li>
+  <li>8/10/2018, commit <a href="https://github.com/openai/baselines/commits/ea68f3b7e6a20d4c6bf1e32f8fb5ce18e6ef3a89">ea68f3b</a>: after a few revisions, the maintainers evaluated <code class="language-plaintext highlighter-rouge">ppo2</code>, producing the <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/benchmarks_mujoco1M.htm">MuJoCo benchmark</a></li>
+  <li>10/4/2018, commit <a href="https://github.com/openai/baselines/commit/7bfbcf177eca8f46c0c0bfbb378e044539f5e061">7bfbcf1</a>: after a few revisions, the maintainers evaluated <code class="language-plaintext highlighter-rouge">ppo2</code>, producing the <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/benchmarks_mujoco1M.htm">Atari benchmark</a></li>
+  <li>1/31/2020, commit <a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>: the maintainers have merged the last commit to <code class="language-plaintext highlighter-rouge">openai/baselines</code> to date. To our knowledge, <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>) is the base of many PPO-related resources:
+    <ol>
+      <li>RL libraries such <a href="https://github.com/DLR-RM/stable-baselines3">Stable-Baselines3 (SB3)</a>, <a href="https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail">pytorch-a2c-ppo-acktr-gail</a>, and <a href="https://github.com/vwxyzjn/cleanrl">CleanRL</a> have built their PPO implementation to match implementation details in <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>) closely.</li>
+      <li>Recent papers (<a href="#Engstrom">Engstrom, Ilyas, et al., 2020</a>; <a href="#Andrychowicz">Andrychowicz, et al., 2021</a>) have examined implementation details concerning robotics tasks in <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>).</li>
+    </ol>
+  </li>
+</ol>
+
+<p>In recent years, reproducing PPO’s results has become a challenging issue. The following table collects the best-reported performance of PPO in popular RL libraries in Atari and MuJoCo environments.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: left">RL Library</th>
+      <th style="text-align: left">GitHub Stars</th>
+      <th style="text-align: left">Benchmark Source</th>
+      <th style="text-align: left">Breakout</th>
+      <th style="text-align: left">Pong</th>
+      <th style="text-align: left">BeamRider</th>
+      <th style="text-align: left">Hopper</th>
+      <th style="text-align: left">Walker2d</th>
+      <th style="text-align: left">HalfCheetah</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/openai/baselines">Baselines</a> <code class="language-plaintext highlighter-rouge">pposgd</code> / <code class="language-plaintext highlighter-rouge">ppo1</code> (<a href="https://github.com/openai/baselines/tree/da997060461e3cbf54ca4dc7a67081a731fb6b3b/baselines/pposgd">da99706</a>)</td>
+      <td style="text-align: left"><a href="https://github.com/openai/baselines/stargazers"><img src="https://img.shields.io/github/stars/openai/baselines" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://arxiv.org/abs/1707.06347">paper</a> ($)</td>
+      <td style="text-align: left">274.8</td>
+      <td style="text-align: left">20.7</td>
+      <td style="text-align: left">1590</td>
+      <td style="text-align: left">~2250</td>
+      <td style="text-align: left">~3000</td>
+      <td style="text-align: left">~1750</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/openai/baselines">Baselines</a> <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/7bfbcf177eca8f46c0c0bfbb378e044539f5e061">7bfbcf1</a> and <a href="https://github.com/openai/baselines/commits/ea68f3b7e6a20d4c6bf1e32f8fb5ce18e6ef3a89">ea68f3b</a>)</td>
+      <td style="text-align: left"> </td>
+      <td style="text-align: left"><a href="https://github.com/openai/baselines/blob/master/benchmarks_atari10M.htm">docs</a> (*)</td>
+      <td style="text-align: left">114.26</td>
+      <td style="text-align: left">13.68</td>
+      <td style="text-align: left">1299.25</td>
+      <td style="text-align: left">2316.16</td>
+      <td style="text-align: left">3424.95</td>
+      <td style="text-align: left">1668.58</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/openai/baselines">Baselines</a> <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>)</td>
+      <td style="text-align: left"> </td>
+      <td style="text-align: left">this blog post (*)</td>
+      <td style="text-align: left">409.265 ± 30.98</td>
+      <td style="text-align: left">20.59 ± 0.40</td>
+      <td style="text-align: left">2627.96 ± 625.751</td>
+      <td style="text-align: left">2448.73 ± 596.13</td>
+      <td style="text-align: left">3142.24 ± 982.25</td>
+      <td style="text-align: left">2148.77 ± 1166.023</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/DLR-RM/stable-baselines3">Stable-Baselines3</a></td>
+      <td style="text-align: left"><a href="https://github.com/DLR-RM/stable-baselines3/stargazers"><img src="https://img.shields.io/github/stars/DLR-RM/stable-baselines3" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://github.com/DLR-RM/rl-baselines3-zoo/blob/111d03c4ce728fff51d4b1c10355ea612bc8d456/benchmark.md">docs</a> (0) (^)</td>
+      <td style="text-align: left">398.03 ± 33.28</td>
+      <td style="text-align: left">20.98 ± 0.10</td>
+      <td style="text-align: left">3397.00 ± 1662.36</td>
+      <td style="text-align: left">2410.43 ± 10.02</td>
+      <td style="text-align: left">3478.79 ± 821.70</td>
+      <td style="text-align: left">5819.09 ± 663.53</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/vwxyzjn/cleanrl">CleanRL</a></td>
+      <td style="text-align: left"><a href="https://github.com/vwxyzjn/cleanrl/stargazers"><img src="https://img.shields.io/github/stars/vwxyzjn/cleanrl" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://wandb.ai/cleanrl/cleanrl.benchmark/reports/Open-RL-Benchmark-0-6-0---Vmlldzo0MDcxOA">docs</a> (1) (*)</td>
+      <td style="text-align: left">~402</td>
+      <td style="text-align: left">~20.39</td>
+      <td style="text-align: left">~2131</td>
+      <td style="text-align: left">~2685</td>
+      <td style="text-align: left">~3753</td>
+      <td style="text-align: left">~1683</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/thu-ml/tianshou">Tianshou</a></td>
+      <td style="text-align: left"><a href="https://github.com/thu-ml/tianshou/stargazers"><img src="https://img.shields.io/github/stars/thu-ml/tianshou" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://arxiv.org/pdf/2107.14171.pdf">paper</a>, <a href="https://github.com/thu-ml/tianshou/blob/f13e415eb0de55baca5dc0d6fae39d6a38e8bc0b/examples/atari/README.md">docs</a> (5) (^)</td>
+      <td style="text-align: left">~400</td>
+      <td style="text-align: left">~20</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">7337.4 ± 1508.2</td>
+      <td style="text-align: left">3127.7 ± 413.0</td>
+      <td style="text-align: left">4895.6 ± 704.3</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/ray-project/ray/tree/master/rllib/">Ray/RLlib</a></td>
+      <td style="text-align: left"><a href="https://github.com/ray-project/ray/stargazers"><img src="https://img.shields.io/github/stars/ray-project/ray" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://github.com/ray-project/rl-experiments/tree/9543891717cd0f8e137e23812229a06f8ed1c6c2">repo</a> (2) (*)</td>
+      <td style="text-align: left">201</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">4480</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">9664</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/openai/spinningup">SpinningUp</a></td>
+      <td style="text-align: left"><a href="https://github.com/openai/spinningupstargazers"><img src="https://img.shields.io/github/stars/openai/spinningup" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://spinningup.openai.com/en/latest/spinningup/bench.html#id12">docs</a> (3) (^)</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">~2500</td>
+      <td style="text-align: left">~2500</td>
+      <td style="text-align: left">~3000</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/chainer/chainerrl">ChainerRL</a></td>
+      <td style="text-align: left"><a href="https://github.com/chainer/chainerrl/stargazers"><img src="https://img.shields.io/github/stars/chainer/chainerrl" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://arxiv.org/pdf/1912.03905.pdf">paper</a> (4) (*)</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">2719 ± 67</td>
+      <td style="text-align: left">2994 ± 113</td>
+      <td style="text-align: left">2404 ± 185</td>
+    </tr>
+    <tr>
+      <td style="text-align: left"><a href="https://github.com/fabiopardo/tonic">Tonic</a></td>
+      <td style="text-align: left"><a href="https://github.com/fabiopardo/tonic/stargazers"><img src="https://img.shields.io/github/stars/fabiopardo/tonic" alt="GitHub stars" /></a></td>
+      <td style="text-align: left"><a href="https://arxiv.org/pdf/2011.07537.pdf">paper</a> (6) (^)</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">-</td>
+      <td style="text-align: left">~2000</td>
+      <td style="text-align: left">~4500</td>
+      <td style="text-align: left">~5000</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><sup>(-): No publicly reported metrics available </sup><br />
+<sup>($): The experiments uses the v1 MuJoCo environments </sup><br />
+<sup>(*): The experiments uses the v2 MuJoCo environments </sup><br />
+<sup>(^): The experiments uses the v3 MuJoCo environments </sup><br />
+<sup>(0): 1M steps for MuJoCo experiments, 10M steps for Atari games, 1 random seed </sup><br />
+<sup>(1): 2M steps for MuJoCo experiments, 10M steps for Atari games, 2 random seeds </sup><br />
+<sup>(2): 25M steps and 10 workers (5 envs per worker) for Atari experiments; 44M steps and 16 workers for MuJoCo experiments; 1 random seed </sup><br />
+<sup>(3): 3M steps, PyTorch version, 10 random seeds </sup><br />
+<sup>(4): 2M steps, 10 random seeds </sup><br />
+<sup>(5): 3M steps, 10 random seeds for MuJoCo experiments; 10M steps, 1 random seed for Atari experiment </sup><br />
+<sup>(6): 5M steps, 10 random seeds </sup></p>
+
+<p>We offer several observations.</p>
+
+<ol>
+  <li>These revisions in <code class="language-plaintext highlighter-rouge">openai/baselines</code> are not without performance consequences. Reproducing PPO’s results is challenging partly because even the original implementation could produce inconsistent results.</li>
+  <li><code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>) and libraries matching its implementation details have reported rather similar results. In comparison, other libraries have usually reported more diverse results.</li>
+  <li>Interestingly, we have found many libraries reported performance in MuJoCo tasks but not in Atari tasks.</li>
+</ol>
+
+<p>Despite the complicated situation, we have found <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>) as an implementation worth studying. It obtains good performance in both Atari and MuJoCo tasks. More importantly, it also incorporates advanced features such as LSTM and treatment of the <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action space, unlocking application to more complicated games such as Real-time Strategy games. As such, we define <code class="language-plaintext highlighter-rouge">ppo2</code> (<a href="https://github.com/openai/baselines/commit/ea25b9e8b234e6ee1bca43083f8f3cf974143998">ea25b9e</a>) as the <strong>official PPO implementation</strong> and base the remainder of this blog post on this implementation.</p>
+
+<h1 id="reproducing-the-official-ppo-implementation">Reproducing the official PPO implementation</h1>
+
+<p>In this section, we introduce five categories of implementation details and implement them in PyTorch from scratch.</p>
+
+<ul>
+  <li>13 core implementation details</li>
+  <li>9 Atari specific implementation details</li>
+  <li>9 implementation details for robotics tasks (with continuous action spaces)</li>
+  <li>5 LSTM implementation details</li>
+  <li>1 <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> implementation detail</li>
+</ul>
+
+<p>For each category (except the first one), we benchmark our implementation against the original implementation in three environments, each with three random seeds.</p>
+
+<h2 id="13-core-implementation-details">13 core implementation details</h2>
+
+<p>We first introduce the 13 core implementation details commonly used regardless of the tasks. To help understand how to code these details in PyTorch, we have prepared a line-by-line video tutorial as follows. Note that the video tutorial skips over the 12-th and 13-th implementation details during its making, hence the video has the title “11 Core Implementation Details”</p>
+
+<div style="text-align: center;"><iframe width="560" height="315" src="https://www.youtube.com/embed/MEt6rrxH8W4" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe></div>
+
+<ol>
+  <li>Vectorized architecture (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/cmd_util.py#L22">common/cmd_util.py#L22</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>PPO leverages an efficient paradigm known as the <strong>vectorized architecture</strong> that features a  single learner that collects samples and learns from multiple environments. Below is a pseudocode:
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">envs</span> <span class="o">=</span> <span class="n">VecEnv</span><span class="p">(</span><span class="n">num_envs</span><span class="o">=</span><span class="n">N</span><span class="p">)</span>
+  <span class="n">agent</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">()</span>
+  <span class="n">next_obs</span> <span class="o">=</span> <span class="n">envs</span><span class="p">.</span><span class="n">reset</span><span class="p">()</span>
+  <span class="n">next_done</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">...,</span> <span class="mi">0</span><span class="p">]</span> <span class="c1"># of length N
+</span>  <span class="k">for</span> <span class="n">update</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">total_timesteps</span> <span class="o">//</span> <span class="p">(</span><span class="n">N</span><span class="o">*</span><span class="n">M</span><span class="p">)):</span>
+      <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
+      <span class="c1"># ROLLOUT PHASE
+</span>      <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">M</span><span class="p">):</span>
+          <span class="n">obs</span> <span class="o">=</span> <span class="n">next_obs</span>
+          <span class="n">done</span> <span class="o">=</span> <span class="n">next_done</span>
+          <span class="n">action</span><span class="p">,</span> <span class="n">other_stuff</span> <span class="o">=</span> <span class="n">agent</span><span class="p">.</span><span class="n">get_action</span><span class="p">(</span><span class="n">obs</span><span class="p">)</span>
+          <span class="n">next_obs</span><span class="p">,</span> <span class="n">reward</span><span class="p">,</span> <span class="n">next_done</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">envs</span><span class="p">.</span><span class="n">step</span><span class="p">(</span>
+              <span class="n">action</span>
+          <span class="p">)</span> <span class="c1"># step in N environments
+</span>          <span class="n">data</span><span class="p">.</span><span class="n">append</span><span class="p">([</span><span class="n">obs</span><span class="p">,</span> <span class="n">action</span><span class="p">,</span> <span class="n">reward</span><span class="p">,</span> <span class="n">done</span><span class="p">,</span> <span class="n">other_stuff</span><span class="p">])</span> <span class="c1"># store data
+</span>
+      <span class="c1"># LEARNING PHASE
+</span>      <span class="n">agent</span><span class="p">.</span><span class="n">learn</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">next_obs</span><span class="p">,</span> <span class="n">next_done</span><span class="p">)</span> <span class="c1"># `len(data) = N*M`
+</span></code></pre></div>        </div>
+      </li>
+      <li>In this architecture, PPO first initializes a <strong>vectorized environment</strong> <code class="language-plaintext highlighter-rouge">envs</code> that runs $N$ (usually independent) environments either sequentially or in parallel by leveraging multi-processes. <code class="language-plaintext highlighter-rouge">envs</code> presents a synchronous interface that always outputs a batch of $N$ observations from $N$ environments, and it takes a batch of $N$ actions to step the $N$ environments. When calling <code class="language-plaintext highlighter-rouge">next_obs = envs.reset()</code>, <code class="language-plaintext highlighter-rouge">next_obs</code> gets a batch of $N$ initial observations (pronounced “next observation”). PPO also initializes an environment done flag variable <code class="language-plaintext highlighter-rouge">next_done</code> (pronounced “next done”) to an $N$-length array of zeros, where its i-th element <code class="language-plaintext highlighter-rouge">next_done[i]</code> has values of 0 or 1 which corresponds to the $i$-th sub-environment being <em>not done</em> and <em>done</em>, respectively.</li>
+      <li>Then, the vectorized architecture loops two phases: the <strong>rollout phase</strong> and the <strong>learning phase</strong>:
+        <ul>
+          <li>Rollout phase : The agent samples actions for the $N$ environments and continue to step them for a fixed number of $M$ steps. During these $M$ steps, the agent continues to append relevant data in an empty list <code class="language-plaintext highlighter-rouge">data</code>. If the $i$-th sub-environment is done (terminated or truncated) after stepping with the $i$-th action <code class="language-plaintext highlighter-rouge">action[i]</code>, <code class="language-plaintext highlighter-rouge">envs</code> would set its returned <code class="language-plaintext highlighter-rouge">next_done[i]</code> to 1, auto-reset the $i$-th sub-environment and fill <code class="language-plaintext highlighter-rouge">next_obs[i]</code> with the initial observation in the new episode of the $i$-th environment.</li>
+          <li>Learning phase: The agent in principal learns from the collected data in the rollout phase: <code class="language-plaintext highlighter-rouge">data</code> of length $NM$, <code class="language-plaintext highlighter-rouge">next_obs</code> and <code class="language-plaintext highlighter-rouge">done</code>. Specifically, PPO can estimate value for the next observation <code class="language-plaintext highlighter-rouge">next_obs</code> conditioned on <code class="language-plaintext highlighter-rouge">next_done</code> and calculate the advantage <code class="language-plaintext highlighter-rouge">advantages</code> and the return <code class="language-plaintext highlighter-rouge">returns</code>, both of which also has length $NM$. PPO then learns from the prepared data <code class="language-plaintext highlighter-rouge">[data, advantages, returns]</code>, which is called “fixed-length trajectory segments” by <a href="#Schulman2017">(Schulman et al., 2017)</a>.</li>
+          <li><strong>It is important to understand <code class="language-plaintext highlighter-rouge">next_obs</code> and <code class="language-plaintext highlighter-rouge">next_done</code>’s role to help transition between phases</strong>: At the end of the $j$-th rollout phase, <code class="language-plaintext highlighter-rouge">next_obs</code> can be used to estimate the value of the final state during learning phase, and in the begining of the $(j+1)$-th rollout phase, <code class="language-plaintext highlighter-rouge">next_obs</code> becomes the initial observation in <code class="language-plaintext highlighter-rouge">data</code>. Likewise, <code class="language-plaintext highlighter-rouge">next_done</code> tells if <code class="language-plaintext highlighter-rouge">next_obs</code> is actually the first observation of a new episode. This intricate design allows PPO to continue step the sub-environments, and because agent always learns from fixed-length trajectory segments after $M$ steps, PPO can train the agent even if the sub-environments never terminate or truncate. This is in principal why PPO can learn in long-horizon games that last 100,000 steps <a href="https://github.com/openai/gym/blob/a7b6462136ebaa610c8941e4da8a9c92155b04d1/gym/envs/__init__.py#L744">(default truncation limit for Atari games in <code class="language-plaintext highlighter-rouge">gym</code>)</a> in a single episode.</li>
+        </ul>
+      </li>
+      <li>A common incorrect implementation is to train PPO based on episodes and setting a maximum episode horizon. Below is a pseudocode.
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">env</span> <span class="o">=</span> <span class="n">Env</span><span class="p">()</span>
+  <span class="n">agent</span> <span class="o">=</span> <span class="n">Agent</span><span class="p">()</span>
+  <span class="k">for</span> <span class="n">episode</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_episodes</span><span class="p">):</span>
+      <span class="n">next_obs</span> <span class="o">=</span> <span class="n">env</span><span class="p">.</span><span class="n">reset</span><span class="p">()</span>
+      <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
+      <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_episode_horizon</span><span class="p">):</span>
+          <span class="n">obs</span> <span class="o">=</span> <span class="n">next_obs</span>
+          <span class="n">action</span><span class="p">,</span> <span class="n">other_stuff</span> <span class="o">=</span> <span class="n">agent</span><span class="p">.</span><span class="n">get_action</span><span class="p">(</span><span class="n">obs</span><span class="p">)</span>
+          <span class="n">next_obs</span><span class="p">,</span> <span class="n">reward</span><span class="p">,</span> <span class="n">done</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">env</span><span class="p">.</span><span class="n">step</span><span class="p">(</span><span class="n">action</span><span class="p">)</span>
+          <span class="n">data</span><span class="p">.</span><span class="n">append</span><span class="p">([</span><span class="n">obs</span><span class="p">,</span> <span class="n">action</span><span class="p">,</span> <span class="n">reward</span><span class="p">,</span> <span class="n">done</span><span class="p">,</span> <span class="n">other_stuff</span><span class="p">])</span> <span class="c1"># store data
+</span>          <span class="k">if</span> <span class="n">done</span><span class="p">:</span>
+              <span class="k">break</span>
+      <span class="n">agent</span><span class="p">.</span><span class="n">learn</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</code></pre></div>        </div>
+        <ul>
+          <li>There are several downsides to this approach. First, it can be inefficient because the agent has to do one forward pass per environment step. Second, it does not scale to games with larger horizons such as StarCraft II (SC2). A single episode of the SC2 could last 100,000 steps, which bloats the memory requirement in this implementation.</li>
+          <li>The vectorized architecture handles this 100,000 steps by learning from <strong>fixed-length trajectory segments</strong>. If we set $N=2$ and $M=100$, the agent would learn from the first 100 steps from 2 independent environments. Then, note that the <code class="language-plaintext highlighter-rouge">next_obs</code> is the 101st observation from these two environments, and the agent can keep doing rollouts and learn from the 101 to 200 steps from the 2 environments. Essentially, the agent learns partial trajectories of the episode, $M$ steps at a time.</li>
+        </ul>
+      </li>
+      <li>$N$ is the <code class="language-plaintext highlighter-rouge">num_envs</code> (decision C1) and $M*N$ is the <code class="language-plaintext highlighter-rouge">iteration_size</code> (decision C2) in <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a>, who suggest increasing $N$ (such as $N=256$) boosts the training throughput but makes the performance worse.  They argued the performance deterioration was due to “shortened experience chunks” ($M$ becomes smaller due to the increase in $N$ in their setup ) and “earlier value bootstrapping.” While we agree increasing $N$ could hurt sample efficiency, we argue the evaluation should be based on wall-clock time efficiency. That is, if the algorithm terminates much sooner with a larger $N$ compared to other configurations, why not run the algorithm longer? Although being a different robotics simulator, <a href="https://github.com/google/brax">Brax</a> follows this idea and can train a viable agent in similar tasks with PPO using a massive $N = 2048$ and a small $M=20$ yet finish the training in one minute.</li>
+      <li>The vectorized environments also support multi-agent reinforcement learning (MARL) environments. Below is the quote from (<a href="https://github.com/openai/gym3">gym3</a>) using our notation:
+        <blockquote>
+          <p>In the simplest case, a vectorized environment corresponds to a single multiplayer game with $N$ players. If we run an RL algorithm in this environment, we are doing self-play without historical opponents. This setup can be straightforwardly extended to having $K$ concurrent games with $H$ players each, with $N = H*K$.</p>
+        </blockquote>
+
+        <ul>
+          <li>For example, if there is a two-player game, we can create a vectorized environment that spawns two sub-environments. Then, the vectorized environment produces a batch of two observations, where the first observation is from player 1 and the second observation is from player 2. Next, the vectorized environment takes a batch of two actions and tells the game engine to let player 1 execute the first action and player 2 execute the second action. Consequently, PPO learns to control both player 1 and player 2 in this vectorized environment.</li>
+          <li>Such MARL usage is widely adopted in games such as Gym-μRTS (<a href="#Huang2021">Huang et al, 2021</a>), Pettingzoo (<a href="#Terry">Terry et al, 2021</a>), etc.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>Orthogonal Initialization of Weights and Constant Initialization of biases (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L58">a2c/utils.py#L58)</a>) <span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span> <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>The related code is across multiple files in the <code class="language-plaintext highlighter-rouge">openai/baselines</code> library. The code for such initialization is in <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L58">a2c/utils.py#L58</a>, when in fact it is used for other algorithms such as PPO. In general, the weights of <em>hidden</em> layers use orthogonal initialization of weights with scaling <code class="language-plaintext highlighter-rouge">np.sqrt(2)</code>, and the biases are set to <code class="language-plaintext highlighter-rouge">0</code>, as shown in the CNN initialization for Atari (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L15-L26">common/models.py#L15-L26</a>), and the MLP initialization for Mujoco (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L75-L103">common/models.py#L75-L103</a>). However, the policy output layer weights are initialized with the scale of <code class="language-plaintext highlighter-rouge">0.01</code>. The value output layer weights are initialized with the scale of <code class="language-plaintext highlighter-rouge">1</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/policies.py#L49-L63">common/policies.py#L49-L63</a>).</li>
+      <li>It seems the implementation of the orthogonal initialization of <code class="language-plaintext highlighter-rouge">openai/baselines</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L20-L35">a2c/utils.py#L20-L35</a>) is different from that of pytorch/pytorch (<a href="https://pytorch.org/docs/stable/_modules/torch/nn/init.html#orthogonal_">torch.nn.init.orthogonal_</a>). However, we consider this to be a very low-level detail that should not impact the performance.</li>
+      <li><a href="#Engstrom">Engstrom, Ilyas, et al., (2020)</a> find orthogonal initialization to outperform the default Xavier initialization in terms of the highest episodic return achieved. Also, <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> find centering the action distribution around 0 (i.e., initialize the policy output layer weights with 0.01”) to be beneficial (decision C57).</li>
+    </ul>
+  </li>
+  <li>The Adam Optimizer’s Epsilon Parameter (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L100">ppo2/model.py#L100</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>PPO sets the epsilon parameter to <code class="language-plaintext highlighter-rouge">1e-5</code>, which is different from the default epsilon of <code class="language-plaintext highlighter-rouge">1e-8</code> in PyTorch and <code class="language-plaintext highlighter-rouge">1e-7</code> in TensorFlow. We list this implementation detail because the epsilon parameter is neither mentioned in the paper nor a configurable parameter in the PPO implementation. While this implementation detail may seem over specific,it is important that we match it for a high-fidelity reproduction.</li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> perform a grid search on Adam optimizer’s parameters (decision C24, C26, C28) and recommend $\beta_1 = 0.9$ and use the Tensorflow’s default epsilon parameter <code class="language-plaintext highlighter-rouge">1e-7</code>. <a href="#Engstrom">Engstrom, Ilyas, et al., (2020)</a> use the default PyTorch epsilon parameter <code class="language-plaintext highlighter-rouge">1e-8</code>.</li>
+    </ul>
+  </li>
+  <li>Adam Learning Rate Annealing (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/ppo2.py#L133-L135">ppo2/ppo2.py#L133-L135</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>The Adam optimizer’s learning rate could be either constant or set to decay. By default, the hyper-parameters for training agents playing Atari games set the learning rate to linearly decay from <code class="language-plaintext highlighter-rouge">2.5e-4</code> to <code class="language-plaintext highlighter-rouge">0</code> as the number of timesteps increases. In MuJoCo, the learning rate linearly decays from <code class="language-plaintext highlighter-rouge">3e-4</code> to <code class="language-plaintext highlighter-rouge">0</code>.</li>
+      <li><a href="#Engstrom">Engstrom, Ilyas, et al., (2020)</a> find adam learning rate annealing to help agents obtain higher episodic return. Also, <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> have also found learning rate annealing helpful as it increases performance in 4 out of 5 tasks examined, although the performance gains are relatively small (decision C31, figure 65).</li>
+    </ul>
+  </li>
+  <li>Generalized Advantage Estimation (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/runner.py#L56-L65">ppo2/runner.py#L56-L65</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>Although the PPO paper uses the abstraction of advantage estimate in the PPO’s objective, the PPO implementation does use Generalized Advantage Estimation (<a href="#Schulman2015b">Schulman, 2015b</a>). Two important sub-details:
+        <ul>
+          <li>Value bootstrap (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/runner.py#L50">ppo2/runner.py#L50</a>): if a sub-environment is <em>not</em> terminated nor truncated, PPO estimates the value of the next state in this sub-environment as the value target.
+            <ul>
+              <li><strong>A note on truncation</strong>: Almost all <code class="language-plaintext highlighter-rouge">gym</code> environments have a time limit and will truncate themselves if they run too long. For example, the <code class="language-plaintext highlighter-rouge">CartPole-v1</code> has a 500 time limit (see <a href="https://github.com/openai/gym/blob/e9df4932434516c9f7956cc8010679a33835b204/gym/envs/__init__.py#L26">link</a>) and will return <code class="language-plaintext highlighter-rouge">done=True</code> if the game lasts for more than 500 steps. While the PPO implementation does not estimate value of the terminal state in the truncated environments, we (intuitively) should. Nonetheless, for high-fidelity reproduction, we did not implement the correct handling for truncated environments.</li>
+            </ul>
+          </li>
+          <li>$TD(\lambda)$ return estimation (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/runner.py#L65">ppo2/runner.py#L65</a>): PPO implements the return target as <code class="language-plaintext highlighter-rouge">returns = advantages + values</code>, which corresponds to $TD(\lambda)$ for value estimation (where Monte Carlo estimation is a special case when $\lambda=1$).</li>
+        </ul>
+      </li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> find GAE to performan better than N-step returns (decision C6, figure 44 and 40).</li>
+    </ul>
+  </li>
+  <li>Mini-batch Updates (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/ppo2.py#L157-L166">ppo2/ppo2.py#L157-L166</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>During the learning phase of the vectorized architecture, the PPO implementation shuffles the indices of the training data of size $N*M$ and breaks it into mini-batches to compute the gradient and update the policy.</li>
+      <li>Some common mis-implementations include 1) always using the whole batch for the update, and 2) implementing mini-batches by randomly fetching from the training data (which does not guarantee all training data points are fetched).</li>
+    </ul>
+  </li>
+  <li>Normalization of Advantages (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L139">ppo2/model.py#L139</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>After calculating the advantages based on GAE, PPO normalizes the advantages by subtracting their mean and dividing them by their standard deviation. In particular, <em>this normalization happens at the minibatch level instead of the whole batch level!</em></li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> (decision C67) find per-minibatch advantage normalization to not affect performance much (figure 35).</li>
+    </ul>
+  </li>
+  <li>Clipped surrogate objective (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L81-L86">ppo2/model.py#L81-L86</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>PPO clips the objective as suggested in the paper.</li>
+      <li><a href="#Engstrom">Engstrom, Ilyas, et al., (2020)</a> find the PPO’s clipped objective to have similar performance to TRPO’s objective when they controlled other implementation details to be the same. <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> find the PPO’s clipped objective to outperform vanilla policy gradient (PG), V-trace, AWR, and V-MPO in most tasks (<a href="#IMPALA">Espeholt et al., 2018</a>).</li>
+      <li>Based on the above findings, we argue PPO’s clipped objective is still a great objective because it achieves similar performance as TRPO’s objective while being computationally cheaper (i.e., without second order optimization as does in TRPO).</li>
+    </ul>
+  </li>
+  <li>Value Function Loss Clipping (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L68-L75">ppo2/model.py#L68-L75</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>
+        <p>PPO clips the value function like the PPO’s clipped surrogate objective. Given the <code class="language-plaintext highlighter-rouge">V_{targ} = returns = advantages + values</code>, PPO fits the the value network by minimizing the following loss:</p>
+
+\[L^{V}=\max \left[\left(V_{\theta_{t}}-V_{t a r g}\right)^{2},\left(\operatorname{clip}\left(V_{\theta_{t}}, V_{\theta_{t-1}}-\varepsilon, V_{\theta_{t-1}}+\varepsilon\right)-V_{t a r g}\right)^{2}\right]\]
+      </li>
+      <li><a href="#Engstrom">Engstrom, Ilyas, et al., (2020)</a> find no evidence that the value function loss clipping helps with the performance. <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> suggest value function loss clipping even hurts performance (decision C13, figure 43).</li>
+      <li>We implemented this detail because this work is more about high-fidelity reproduction of prior results.</li>
+    </ul>
+  </li>
+  <li>Overall Loss and Entropy Bonus (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L91">ppo2/model.py#L91</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>The overall loss is calculated as <code class="language-plaintext highlighter-rouge">loss = policy_loss - entropy * entropy_coefficient + value_loss * value_coefficient</code>, which maximizes an entropy bonus term. Note that the policy parameters and value parameters share the same optimizer.</li>
+      <li>Mnih et al. have reported this entropy bonus to improve exploration by encouraging the action probability distribution to be slightly more random.</li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> overall find no evidence that the entropy term improves performance on continuous control environments (decision C13, figure 76 and 77).</li>
+    </ul>
+  </li>
+  <li>Global Gradient Clipping (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L102-L108">ppo2/model.py#L102-L108</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>For each update iteration in an epoch, PPO rescales the gradients of the policy and value network so that the “global l2 norm” (i.e., the norm of the concatenated gradients of all parameters) does not exceed <code class="language-plaintext highlighter-rouge">0.5</code>.</li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> find global gradient clipping to offer a small performance boost (decision C68, figure 34).</li>
+    </ul>
+  </li>
+  <li>Debug variables (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L115-L116">ppo2/model.py#L115-L116</a>)
+    <ul>
+      <li>The PPO implementation comes with several debug variables, which are
+        <ol>
+          <li><code class="language-plaintext highlighter-rouge">policy_loss</code>: the mean policy loss across all data points.</li>
+          <li><code class="language-plaintext highlighter-rouge">value_loss</code>: the mean value loss across all data points.</li>
+          <li><code class="language-plaintext highlighter-rouge">entropy_loss</code>: the mean entropy value across all data points.</li>
+          <li><code class="language-plaintext highlighter-rouge">clipfrac</code>: the fraction of the training data that triggered the clipped objective.</li>
+          <li><code class="language-plaintext highlighter-rouge">approxkl</code>: the approximate Kullback–Leibler divergence, measured by <code class="language-plaintext highlighter-rouge">(-logratio).mean()</code>, which corresponds to the <code class="language-plaintext highlighter-rouge">k1</code> estimator in John Schulman’s blog post on <a href="http://joschu.net/blog/kl-approx.html">approximating KL divergence</a>. This blog post also suggests using an alternative estimator <code class="language-plaintext highlighter-rouge">((ratio - 1) - logratio).mean()</code>, which is unbiased and has less variance.</li>
+        </ol>
+      </li>
+    </ul>
+  </li>
+  <li>Shared and separate MLP networks for policy and value functions (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/policies.py#L156-L160">common/policies.py#L156-L160</a>, <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L75-L103">baselines/common/models.py#L75-L103</a>)<span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span> <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>By default, PPO uses a simple MLP network consisting of two layers of 64 neurons and Hyperbolic Tangent as the activation function. Then PPO builds a policy head and value head that share the outputs of the MLP network. Below is a pseudocode:
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">network</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="n">np</span><span class="p">.</span><span class="n">array</span><span class="p">(</span><span class="n">envs</span><span class="p">.</span><span class="n">single_observation_space</span><span class="p">.</span><span class="n">shape</span><span class="p">).</span><span class="n">prod</span><span class="p">(),</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+  <span class="p">)</span>
+  <span class="n">value_head</span> <span class="o">=</span> <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+  <span class="n">policy_head</span> <span class="o">=</span> <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="n">envs</span><span class="p">.</span><span class="n">single_action_space</span><span class="p">.</span><span class="n">n</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+  <span class="n">hidden</span> <span class="o">=</span> <span class="n">network</span><span class="p">(</span><span class="n">observation</span><span class="p">)</span>
+  <span class="n">value</span> <span class="o">=</span> <span class="n">value_head</span><span class="p">(</span><span class="n">hidden</span><span class="p">)</span>
+  <span class="n">action</span> <span class="o">=</span> <span class="n">Categorical</span><span class="p">(</span><span class="n">policy_head</span><span class="p">(</span><span class="n">hidden</span><span class="p">)).</span><span class="n">sample</span><span class="p">()</span>
+</code></pre></div>        </div>
+      </li>
+      <li>Alternatively, PPO could build a policy function and a value function using separate networks by toggling the <code class="language-plaintext highlighter-rouge">value_network='copy'</code> argument. Then the pseudocode looks like this:
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">value_network</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="n">np</span><span class="p">.</span><span class="n">array</span><span class="p">(</span><span class="n">envs</span><span class="p">.</span><span class="n">single_observation_space</span><span class="p">.</span><span class="n">shape</span><span class="p">).</span><span class="n">prod</span><span class="p">(),</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+  <span class="p">)</span>
+  <span class="n">policy_network</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="n">np</span><span class="p">.</span><span class="n">array</span><span class="p">(</span><span class="n">envs</span><span class="p">.</span><span class="n">single_observation_space</span><span class="p">.</span><span class="n">shape</span><span class="p">).</span><span class="n">prod</span><span class="p">(),</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="n">envs</span><span class="p">.</span><span class="n">single_action_space</span><span class="p">.</span><span class="n">n</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.01</span><span class="p">),</span>
+  <span class="p">)</span>
+  <span class="n">value</span> <span class="o">=</span> <span class="n">value_network</span><span class="p">(</span><span class="n">observation</span><span class="p">)</span>
+  <span class="n">action</span> <span class="o">=</span> <span class="n">Categorical</span><span class="p">(</span><span class="n">policy_network</span><span class="p">(</span><span class="n">observation</span><span class="p">)).</span><span class="n">sample</span><span class="p">()</span>
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+</ol>
+
+<p>We incorporate the first 12 details and the <strong>separate-networks architecture</strong> to produce a self-contained <code class="language-plaintext highlighter-rouge">ppo.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo.py">link</a>) that has 322 lines of code. Then, we make about <a href="https://www.diffchecker.com/07TdfFlg">10 lines of code</a> change to adopt the <strong>shared-network architecture</strong>, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_shared.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_shared.py">link</a>) that has 317 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_shared.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_shared" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script src="https://unpkg.com/monaco-editor@latest/min/vs/loader.js"></script>
+
+<script>
+  require.config({
+    paths: { vs: "https://unpkg.com/monaco-editor@latest/min/vs" },
+  });
+  window.MonacoEnvironment = { getWorkerUrl: () => proxy };
+
+  let proxy = URL.createObjectURL(
+    new Blob(
+      [
+        `
+	self.MonacoEnvironment = {
+		baseUrl: 'https://unpkg.com/monaco-editor@latest/min/'
+	};
+	importScripts('https://unpkg.com/monaco-editor@latest/min/vs/base/worker/workerMain.js');
+`,
+      ],
+      { type: "text/javascript" }
+    )
+  );
+
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_shared")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_shared.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+        startLineNumber: 104,
+      });
+      diffEditor.revealPositionInCenter({ lineNumber: 115, column: 0 });
+    });
+  });
+</script>
+
+<script>
+  function xhr(url) {
+    var req = null;
+    return new Promise(
+      function (c, e) {
+        req = new XMLHttpRequest();
+        req.onreadystatechange = function () {
+          if (req._canceled) {
+            return;
+          }
+
+          if (req.readyState === 4) {
+            if (
+              (req.status >= 200 && req.status < 300) ||
+              req.status === 1223
+            ) {
+              c(req);
+            } else {
+              e(req);
+            }
+            req.onreadystatechange = function () {};
+          }
+        };
+
+        req.open("GET", url, true);
+        req.responseType = "";
+
+        req.send(null);
+      },
+      function () {
+        req._canceled = true;
+        req.abort();
+      }
+    );
+  }
+</script>
+
+<p>Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//CartPole-v1.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Acrobot-v1.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//MountainCar-v0.png" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked classic control experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Classic-Control-Our-PPO-vs-openai-baselines-PPO--VmlldzoxMzk5NDA0" style="width:100%; height:500px" title="Tracked classic control experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<p>While shared-network architecture is the default setting in PPO, the separate-networks architecture clearly outperforms in simpler environments. The shared-network architecture performs worse probably due to the competing objectives of the policy and value functions. For this reason, we implement the separate-networks architecture in the video tutorial.</p>
+
+<h2 id="9-atari-specific-implementation-details">9 Atari-specific implementation details</h2>
+
+<p>Next, we introduce the 9 Atari-specific implementation details. To help understand how to code these details in PyTorch, we have prepared a line-by-line video tutorial.</p>
+
+<div style="text-align: center;"><iframe width="560" height="315" src="https://www.youtube.com/embed/05RMTj-2K_Y" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe></div>
+
+<ol>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">NoopResetEnv</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L12">common/atari_wrappers.py#L12</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>This wrapper samples initial states by taking a random number (between 1 and 30) of no-ops on reset.</li>
+      <li>The source of this wrapper comes from <a href="#Mnih2015">(Mnih et al., 2015, Extended Data Table 1)</a> and <a href="#Machado2018">Machado et al., 2018)</a> have suggested <code class="language-plaintext highlighter-rouge">NoopResetEnv</code> is a way to inject stochasticity to the environment.</li>
+    </ul>
+  </li>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">MaxAndSkipEnv</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L97">common/atari_wrappers.py#L97</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>This wrapper skips 4 frames by default, repeats the agent’s last action on the skipped frames, and sums up the rewards in the skipped frames. Such frame-skipping technique could considerably speed up the algorithm because the environment step is computationally cheaper than the agent’s forward pass <a href="#Mnih2015">(Mnih et al., 2015)</a>.</li>
+      <li>This wrapper also returns the maximum pixel values over the last two frames to help deal with some Atari game quirks <a href="#Mnih2015">(Mnih et al., 2015)</a>.</li>
+      <li>The source of this wrapper comes from <a href="#Mnih2015">(Mnih et al., 2015)</a> as shown by the quote below.
+        <blockquote>
+          <p>More precisely, the agent sees and selects actions on every $k$-th frame instead of every frame, and its last action is repeated on skipped frames. Because running the emulator forward for one step requires much less computation than having the agent select an action, this technique allows the agent to play roughly $k$ times more games without significantly increasing the runtime. We use $k=4$ for all games.
+  […]
+  First, to encode a single frame we take the maximum value for each pixel color value over the frame being encoded and the previous frame. This was necessary to remove flickering that is present in games where some objects appear only in even frames while other objects appear only in odd frames, an artifact caused by the limited number of sprites Atari 2600 can display at once.</p>
+        </blockquote>
+      </li>
+    </ul>
+  </li>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">EpisodicLifeEnv</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L61">common/atari_wrappers.py#L61</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>In the games where there are a life counter such as breakout, this wrapper marks the end of life as the end of episode.</li>
+      <li>The source of this wrapper comes from <a href="#Mnih2015">(Mnih et al., 2015)</a> as shown by the quote below.
+        <blockquote>
+          <p>For games where there is a life counter, the Atari 2600 emulator also sends the number of lives left in the game, which is then used to mark the end of an episode during training.</p>
+        </blockquote>
+      </li>
+      <li>Interestingly, <a href="Bellemare2016b">(Bellemare et al., 2016)</a> Note this the wrapper could be detrimental to the agent’s performance and  <a href="#Machado2018">Machado et al., 2018)</a> have suggested not using this wrapper.</li>
+    </ul>
+  </li>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">FireResetEnv</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L41">common/atari_wrappers.py#L41</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>This wrapper takes the <code class="language-plaintext highlighter-rouge">FIRE</code> action on reset for environments that are fixed until firing.</li>
+      <li>This wrapper is interesting because there is no literature reference to our knowledge. According to anecdotal conversations(<a href="https://github.com/openai/baselines/issues/240">openai/baselines#240</a>), neither people from DeepMind nor OpenAI know where this wrapper comes from. So…
+  <img src="https://cdn.imgbin.com/21/1/17/imgbin-illuminati-symbol-shadow-government-spinner-3E2tJSxu7Zx6yaTffaaSZK2Wj.jpg" style="max-width:10%; display:inline" /></li>
+    </ul>
+  </li>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">WarpFrame</code> (Image transformation) <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L134">common/atari_wrappers.py#L134</a> <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>This wrapper warps extracts the Y channel of the 210x160 pixel images and resizes it to 84x84.</li>
+      <li>The source of this wrapper comes from <a href="#Mnih2015">(Mnih et al., 2015)</a> as shown by the quote below.
+        <blockquote>
+          <p>Second, we then extract the Y channel, also known as luminance, from the RGB frame and rescale it to 84x84.</p>
+        </blockquote>
+      </li>
+      <li>In our implementation, we use the following wrappers to achieve the same purpose.
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">env</span> <span class="o">=</span> <span class="n">gym</span><span class="p">.</span><span class="n">wrappers</span><span class="p">.</span><span class="n">ResizeObservation</span><span class="p">(</span><span class="n">env</span><span class="p">,</span> <span class="p">(</span><span class="mi">84</span><span class="p">,</span> <span class="mi">84</span><span class="p">))</span>
+  <span class="n">env</span> <span class="o">=</span> <span class="n">gym</span><span class="p">.</span><span class="n">wrappers</span><span class="p">.</span><span class="n">GrayScaleObservation</span><span class="p">(</span><span class="n">env</span><span class="p">)</span>
+</code></pre></div>        </div>
+      </li>
+    </ul>
+  </li>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">ClipRewardEnv</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L125">common/atari_wrappers.py#L125</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>This wrapper bins reward to <code class="language-plaintext highlighter-rouge">{+1, 0, -1}</code> by its sign.</li>
+      <li>The source of this wrapper comes from <a href="#Mnih2015">(Mnih et al., 2015)</a> as shown by the quote below.
+        <blockquote>
+          <p>As the scale of scores varies greatly from game to game, we clipped all positive rewards at 1 and all negative rewards at -1, leaving 0 rewards unchanged. Clipping the rewards in this manner limits the scale of the error derivatives and makes it easier to use the same learning rate across multiple games. At the same time, it could affect the performance of our agent since it cannot differentiate between rewards of different magnitude.</p>
+        </blockquote>
+      </li>
+    </ul>
+  </li>
+  <li>The Use of <code class="language-plaintext highlighter-rouge">FrameStack</code> (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/atari_wrappers.py#L188">common/atari_wrappers.py#L188</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>This wrapper stacks $m$ last frames such that the agent can infer the velocity and directions of moving objects.</li>
+      <li>The source of this wrapper comes from <a href="#Mnih2015">(Mnih et al., 2015)</a> as shown by the quote below.
+        <blockquote>
+          <p>The function $\theta$ from algorithm 1 described below applies this preprocessing to the $m$ most recent frames and stacks them to produce the input to the Q-function, in which $m=4$.</p>
+        </blockquote>
+      </li>
+    </ul>
+  </li>
+  <li>Shared Nature-CNN network for the policy and value functions (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/policies.py#L157">common/policies.py#L157</a>, <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L15-L26">common/models.py#L15-L26</a>)<span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span>
+    <ul>
+      <li>For Atari games, PPO uses the same Convolutional Neural Network (CNN) in <a href="#Mnih2015">(Mnih et al., 2015)</a> along with the layer initialization technique mentioned earlier (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L52-L53">baselines/a2c/utils.py#L52-L53</a>) to extract features, flatten the extracted features, apply a linear layer to compute the hidden features. Afterward, the policy and value functions share parameters by constructing a policy head and a value head using the hidden features. Below is a pseudocode:
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">hidden</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">4</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">2</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">1</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">Flatten</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span> <span class="o">*</span> <span class="mi">7</span> <span class="o">*</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">512</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+  <span class="p">)</span>
+  <span class="n">policy</span> <span class="o">=</span> <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">512</span><span class="p">,</span> <span class="n">envs</span><span class="p">.</span><span class="n">single_action_space</span><span class="p">.</span><span class="n">n</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+  <span class="n">value</span> <span class="o">=</span> <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">512</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>        </div>
+      </li>
+      <li>Such a parameter-sharing paradigm obviously computes faster when compared to setting completely separate networks, which would look like the following.
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">policy</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">4</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">2</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">1</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">Flatten</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span> <span class="o">*</span> <span class="mi">7</span> <span class="o">*</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">512</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">512</span><span class="p">,</span> <span class="n">envs</span><span class="p">.</span><span class="n">single_action_space</span><span class="p">.</span><span class="n">n</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+  <span class="p">)</span>
+  <span class="n">value</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">4</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">2</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Conv2d</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="mi">1</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">Flatten</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span> <span class="o">*</span> <span class="mi">7</span> <span class="o">*</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">512</span><span class="p">)),</span>
+      <span class="n">ReLU</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">512</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+  <span class="p">)</span>
+</code></pre></div>        </div>
+      </li>
+      <li>However, recent work suggests balancing the competing policy and value objective could be problematic, which is what methods like Phasic Policy Gradient are trying to address (<a href="#Cobbe2021">Cobbe et al., 2021</a>).</li>
+    </ul>
+  </li>
+  <li>Scaling the Images to Range [0, 1] (<a href="https://github.com/openai/baselines/blob/9b68103b737ac46bc201dfb3121cfa5df2127e53/baselines/common/models.py#L19">common/models.py#L19</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>The input data has the range of [0,255], but it is divided by 255 to be in the range of [0,1].</li>
+      <li>Our anecdotal experiments found this scaling important. Without it, the first policy update results in the Kullback–Leibler divergence explosion, likely due to how the layers are initialized.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>To run the experiments, we match the hyperparameters used in the original implementation as follows.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># https://github.com/openai/baselines/blob/master/baselines/ppo2/defaults.py
+</span><span class="k">def</span> <span class="nf">atari</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">nsteps</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">nminibatches</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">lam</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span> <span class="n">noptepochs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">log_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">ent_coef</span><span class="o">=</span><span class="p">.</span><span class="mi">01</span><span class="p">,</span>
+        <span class="n">lr</span><span class="o">=</span><span class="k">lambda</span> <span class="n">f</span> <span class="p">:</span> <span class="n">f</span> <span class="o">*</span> <span class="mf">2.5e-4</span><span class="p">,</span>
+        <span class="n">cliprange</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div></div>
+<p>These hyperparameters are</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">nsteps</code> is the $M$ explained in this blog post .</li>
+  <li><code class="language-plaintext highlighter-rouge">nminibatches</code> is the number of minibatches used for update (i.e., our 6th implementation detail).</li>
+  <li><code class="language-plaintext highlighter-rouge">lam</code> is the GAE’s $\lambda$ parameter.</li>
+  <li><code class="language-plaintext highlighter-rouge">gamma</code> is the discount factor.</li>
+  <li><code class="language-plaintext highlighter-rouge">noptepochs</code> is the $K$ epochs in the original PPO paper.</li>
+  <li><code class="language-plaintext highlighter-rouge">ent_coef</code> is the <code class="language-plaintext highlighter-rouge">entropy_coefficient</code> in our 10th implementation detail.</li>
+  <li><code class="language-plaintext highlighter-rouge">lr=lambda f : f * 2.5e-4</code> is a learning rate schedule (i.e., our 4th implementation detail)</li>
+  <li><code class="language-plaintext highlighter-rouge">cliprange=0.1</code> is the clipping parameter $\epsilon$ in the original PPO paper.</li>
+</ul>
+
+<p>Note that the number of environments parameter $N$ (i.e., <code class="language-plaintext highlighter-rouge">num_envs</code>) is set to the number of CPUs in the computer (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/cmd_util.py#L167">common/cmd_util.py#L167</a>), which is strange. We have chosen instead to match the <code class="language-plaintext highlighter-rouge">N=8</code> used in the paper (the paper listed the parameter as “number of actors, 8”).</p>
+
+<p>As shown below, we make <a href="https://www.diffchecker.com/Dq5NfuQH">~40 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo.py</code> to incorporate these 9 details, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_atari.py">link</a>) that has 339 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_atari" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_atari")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+    });
+  });
+</script>
+
+<p>Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Breakout.svg" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Pong.svg" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BeamRider.svg" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked Atari experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Atari-Our-PPO-vs-openai-baselines-PPO--VmlldzoxODAxMzI0" style="width:100%; height:500px" title="Tracked Atari experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<h2 id="9-details-for-continuous-action-domains-eg-mujoco">9 details for continuous action domains (e.g. Mujoco)</h2>
+
+<p>Next, we introduce the 9 details for continuous action domains such as MuJoCo tasks. To help understand how to code these details in PyTorch, we have prepared a line-by-line video tutorial. Note that the video tutorial skips over the 4-th implementation detail during its making, hence the video has the title “8 Details for Continuous Actions”</p>
+
+<div style="text-align: center;"><iframe width="560" height="315" src="https://www.youtube.com/embed/BvZvx7ENZBw" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe></div>
+
+<ol>
+  <li>Continuous actions via normal distributions (<a href="https://github.com/openai/baselines/blob/9b68103b737ac46bc201dfb3121cfa5df2127e53/baselines/common/distributions.py#L103-L104">common/distributions.py#L103-L104</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>Policy gradient methods (including PPO) assume the continuous actions are sampled from a normal distribution. So to create such distribution, the neural network needs to output the mean and standard deviation of the continuous action.</li>
+      <li>It is very popular to choose Gaussian distribution to represent the action distribution when the reinforcement learning algorithm is implemented in the environment of continuous action space. For example: <a href="#Schulman2015">Schulman et al., (2015)</a> and <a href="#Duan2016">Duan et al., (2016)</a>.</li>
+    </ul>
+  </li>
+  <li>State-independent log standard deviation (<a href="https://github.com/openai/baselines/blob/9b68103b737ac46bc201dfb3121cfa5df2127e53/baselines/common/distributions.py#L104">common/distributions.py#L104</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>The implementation outputs the logits for the mean, but instead of outputting the logits for the standard deviation, it outputs the <em>logarithm</em> of the standard deviation. In addition, this <code class="language-plaintext highlighter-rouge">log std</code> is set to be <em>state-independent and initialized to be 0.</em></li>
+      <li><a href="#Schulman2015">Schulman et al., (2015)</a> and <a href="#Duan2016">Duan et al., (2016)</a> use state-independent standard deviation, while <a href="#Haarnoja2018">Haarnoja et al., (2018)</a> uses the state-dependent standard deviation, that is, the mean and standard deviation are output at the same time. <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> compared two different implementations and found that the performance is very close (decision C59, figure 23).</li>
+    </ul>
+  </li>
+  <li>Independent action components (<a href="https://github.com/openai/baselines/blob/9b68103b737ac46bc201dfb3121cfa5df2127e53/baselines/common/distributions.py#L238-L246">common/distributions.py#L238-L246</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>In many robotics tasks, it is common to have multiple scalar values to represent a continuous action. For example, the action of \(a_t = [a^1_t, a^2_t] = [2.4, 3.5]\) might mean to move left for 2.4 meters and move up 3.5 meters. However, most literature on policy gradient suggests the action \(a_t\) would be a single scalar value.  To account for this difference, PPO treats \([a^1_t, a^2_t]\) as probabilistically independent action components, therefore calculating \(prob(a_t) = prob(a^1_t) \cdot prob(a^2_t)\).</li>
+      <li>This approach comes from the currently commonly used assumption: Gaussian distribution with full covariance is used to represent the policy, which means that the action selection for each dimension is performed independently. When facing the environment of multi-dimensional action space, <a href="#Tavakoli2018">Tavakoli, et al. (2018)</a> also believes that each action dimension should be selected independently and to achieve this goal by designing a network structure. Although our intuition tells us that there may be dependencies between action choices in different dimensions of policies in some environments, what is the optimal choice is still an open question. It is worth noting that this question has attracted the attention of the community, and began to try to model the dependencies of actions in different dimensions, such as using auto-regressive policy (<a href="#Metz2019">Metz, et al. (2019)</a>, <a href="#Zhang2018">Zhang, et al. (2019)</a>)</li>
+    </ul>
+  </li>
+  <li>Separate MLP networks for policy and value functions (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/policies.py#L160">common/policies.py#L160</a>, <a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L75-L103">baselines/common/models.py#L75-L103</a>)<span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span>
+    <ul>
+      <li>For continuous control tasks, PPO uses a simple MLP network consisting of two layers of 64 neurons and Hyperbolic Tangent as the activation function (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L75-L103">baselines/common/models.py#L75-L103</a>) for both the policy and value functions (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/policies.py#L160">common/policies.py#L160</a>). Below is a pseudocode (also combining previous 3 details):
+        <div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="n">value_network</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="n">np</span><span class="p">.</span><span class="n">array</span><span class="p">(</span><span class="n">envs</span><span class="p">.</span><span class="n">single_observation_space</span><span class="p">.</span><span class="n">shape</span><span class="p">).</span><span class="n">prod</span><span class="p">(),</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+  <span class="p">)</span>
+  <span class="n">policy_mean</span> <span class="o">=</span> <span class="n">Sequential</span><span class="p">(</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="n">np</span><span class="p">.</span><span class="n">array</span><span class="p">(</span><span class="n">envs</span><span class="p">.</span><span class="n">single_observation_space</span><span class="p">.</span><span class="n">shape</span><span class="p">).</span><span class="n">prod</span><span class="p">(),</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">)),</span>
+      <span class="n">Tanh</span><span class="p">(),</span>
+      <span class="n">layer_init</span><span class="p">(</span><span class="n">Linear</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="n">envs</span><span class="p">.</span><span class="n">single_action_space</span><span class="p">.</span><span class="n">n</span><span class="p">),</span> <span class="n">std</span><span class="o">=</span><span class="mf">0.01</span><span class="p">),</span>
+  <span class="p">)</span>
+  <span class="n">policy_logstd</span> <span class="o">=</span> <span class="n">nn</span><span class="p">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="p">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">np</span><span class="p">.</span><span class="n">prod</span><span class="p">(</span><span class="n">envs</span><span class="p">.</span><span class="n">single_action_space</span><span class="p">.</span><span class="n">shape</span><span class="p">)))</span>
+  <span class="n">value</span> <span class="o">=</span> <span class="n">value_network</span><span class="p">(</span><span class="n">observation</span><span class="p">)</span>
+  <span class="n">probs</span> <span class="o">=</span> <span class="n">Normal</span><span class="p">(</span>
+      <span class="n">policy_mean</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+      <span class="n">policy_logstd</span><span class="p">.</span><span class="n">expand_as</span><span class="p">(</span><span class="n">action_mean</span><span class="p">).</span><span class="n">exp</span><span class="p">(),</span>
+  <span class="p">)</span>
+  <span class="n">action</span> <span class="o">=</span> <span class="n">probs</span><span class="p">.</span><span class="n">sample</span><span class="p">()</span>
+  <span class="n">logprob</span> <span class="o">=</span> <span class="n">probs</span><span class="p">.</span><span class="n">log_prob</span><span class="p">(</span><span class="n">action</span><span class="p">).</span><span class="nb">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>        </div>
+      </li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> find the separate policy and value networks generally lead to better performance (decision C47, figure 15).</li>
+    </ul>
+  </li>
+  <li>Handling of action clipping to valid range and storage (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/cmd_util.py#L99-L100">common/cmd_util.py#L99-L100</a>)  <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>After a continuous action is sampled, such action could be invalid because it could exceed the valid range of continuous actions in the environment. To avoid this, add applies the rapper to clip the action into the valid range. However, the original unclipped action is stored as part of the episodic data (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/runner.py#L29-L31">ppo2/runner.py#L29-L31</a>).</li>
+      <li>Since the sampling of the Gaussian distribution has no boundaries, the environment usually has certain restrictions on the action space. So <a href="#Duan2016">Duan et al., (2016)</a> adopted clipping sampled actions into their bounds, <a href="#Haarnoja2018">Haarnoja et al., (2018)</a> adopted invertible squashing function (tanh) to the Gaussian samples to satisfy constraints. <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> Compared the two implementations and found that the tanh method is better (decision C63, figure 17). But in order to obtain consistent performance, we chose the implementation of clip. It is worth noting that <a href="#Chou2017">Chou 2017</a> and <a href="#Fujita2018">Fujita, et al. (2018)</a> pointed out the bias brought by the clip method and proposed different solutions.</li>
+    </ul>
+  </li>
+  <li>Normalization of Observation (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/vec_env/vec_normalize.py#L4">common/vec_env/vec_normalize.py#L4</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>At each timestep, the <code class="language-plaintext highlighter-rouge">VecNormalize</code> wrapper pre-processes the observation before feeding it to the PPO agent. The raw observation was normalized by subtracting its running mean and divided by its variance.</li>
+      <li>Using normalization on the input has become a well-known technique for training neural networks.  <a href="#Duan2016">Duan et al., (2016)</a> adopted a moving average normalization for the observation to process the input of the network, which has also become the default choice for subsequent implementations. <a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> experimentally determined that normalization for observation is very helpful for performance (decision C64, figure 33)</li>
+    </ul>
+  </li>
+  <li>Observation Clipping (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/vec_env/vec_normalize.py#L39">common/vec_env/vec_normalize.py#L39</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>Followed by the normalization of observation, the <em>normalized observation</em> is further clipped by <code class="language-plaintext highlighter-rouge">VecNormalize</code> to a range, usually [−10, 10].</li>
+      <li><a href="#Andrychowicz">Andrychowicz, et al. (2021)</a> found that after normalization of observation, using observation clipping did not help performance (decision C65, figure 38), but guessed that it might be helpful in an environment with a wide range of observation.</li>
+    </ul>
+  </li>
+  <li>Reward Scaling (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/vec_env/vec_normalize.py#L28">common/vec_env/vec_normalize.py#L28</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>The <code class="language-plaintext highlighter-rouge">VecNormalize</code> also applies a certain discount-based scaling scheme, where the rewards are divided by the standard deviation of a rolling discounted sum of the rewards (without subtracting and re-adding the mean).</li>
+      <li><a href="#Engstrom">Engstrom, Ilyas, et al., (2020)</a> reported that reward scaling can significantly affect the performance of the algorithm and recommends the use of reward scaling.</li>
+    </ul>
+  </li>
+  <li>Reward Clipping (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/vec_env/vec_normalize.py#L32">common/vec_env/vec_normalize.py#L32</a>) <span title="Detail related to environment preprocessing" class="detail-label green-label">Environment Preprocessing</span>
+    <ul>
+      <li>Followed by the scaling of reward, the <em>scaled reward</em> is further clipped by <code class="language-plaintext highlighter-rouge">VecNormalize</code> to a range, usually [−10, 10].</li>
+      <li>A similar approach can be found in <a href="#Mnih2015">(Mnih et al., 2015)</a>. There is currently no clear evidence that Reward Clipping after Reward Scaling can help with learning.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>We make <a href="https://www.diffchecker.com/lsy3qa5e">~25 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo.py</code> to incorporate these 9 details, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_continuous_action.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_continuous_action.py">link</a>) that has 331 lines of code.  The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_continuous_action.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_continuous_action" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_continuous_action")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_continuous_action.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+    });
+  });
+</script>
+
+<p>To run the experiments, we match the hyperparameters used in the original implementation as follows.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># https://github.com/openai/baselines/blob/master/baselines/ppo2/defaults.py
+</span><span class="k">def</span> <span class="nf">mujoco</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">nsteps</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span>
+        <span class="n">nminibatches</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+        <span class="n">lam</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+        <span class="n">gamma</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span>
+        <span class="n">noptepochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+        <span class="n">log_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">ent_coef</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">lr</span><span class="o">=</span><span class="k">lambda</span> <span class="n">f</span><span class="p">:</span> <span class="mf">3e-4</span> <span class="o">*</span> <span class="n">f</span><span class="p">,</span>
+        <span class="n">cliprange</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+        <span class="n">value_network</span><span class="o">=</span><span class="s">'copy'</span>
+    <span class="p">)</span>
+</code></pre></div></div>
+
+<p>Note that <code class="language-plaintext highlighter-rouge">value_network='copy'</code> means to use the separate MLP networks for policy and value functions (i.e., the 4th implementation detail in this section). Also, the number of environments parameter $N$ (i.e., <code class="language-plaintext highlighter-rouge">num_envs</code>) is set to 1 (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/cmd_util.py#L167">common/cmd_util.py#L167</a>). Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Hopper-v2.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Walker2d-v2.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//HalfCheetah-v2.png" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked MuJoCo experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/MuJoCo-Our-PPO-vs-openai-baselines-PPO--VmlldzoxODAxMzQz" style="width:100%; height:500px" title="Tracked MuJoCo experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<h2 id="5-lstm-implementation-details">5 LSTM implementation details</h2>
+
+<p>Next, we introduce the 5 details for implementing LSTM.</p>
+
+<ol>
+  <li>Layer initialization for LSTM layers
+(<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L84-L86">a2c/utils.py#L84-L86</a>) <span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span>
+    <ul>
+      <li>The LSTM’s layers’ weights are initialized with <code class="language-plaintext highlighter-rouge">std=1</code> and biases initialized with <code class="language-plaintext highlighter-rouge">0</code>.</li>
+    </ul>
+  </li>
+  <li>Initialize the LSTM states to be zeros (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L179">common/models.py#L179</a>) <span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span>
+    <ul>
+      <li>The hidden and cell states of LSTM are initialized with zeros.</li>
+    </ul>
+  </li>
+  <li>Reset LSTM states at the end of the episode (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L141">common/models.py#L141</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>During rollouts or training, an end-of-episode flag is passed to the agent so that it can reset The LSTM states to zeros.</li>
+    </ul>
+  </li>
+  <li>Prepare sequential rollouts in mini-batches
+(<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L81">a2c/utils.py#L81</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>Under the non-LSTM setting, the mini-batches fetch randomly-indexed training data because the ordering of the training data doesn’t matter. However, the ordering of the training data does matter in the LSTM setting. As a result, the mini-batches fetch the sequential training data from sub-environments.</li>
+    </ul>
+  </li>
+  <li>Reconstruct LSTM states during training
+(<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/a2c/utils.py#L81">a2c/utils.py#L81</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>The algorithm saves a copy of the LSTM states <code class="language-plaintext highlighter-rouge">initial_lstm_state</code> before rollouts. During training, the agent then sequentially reconstruct the LSTM states based on the <code class="language-plaintext highlighter-rouge">initial_lstm_state</code>. This process ensures that we reconstructed the probability distributions used in rollouts.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>We make <a href="https://www.diffchecker.com/RelaUQdN">~60 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> to incorporate these 5 details, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_atari_lstm.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_atari_lstm.py">link</a>) that has 385 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_atari_lstm.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_atari_lstm" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_atari_lstm")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari_lstm.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+      diffEditor.revealPositionInCenter({ lineNumber: 112, column: 0 });
+    });
+  });
+</script>
+
+<p>To run the experiments, we use the Atari hyperparameters again and remove the frame stack (i.e., setting the number of frames stacked to 1). Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BreakoutNoFrameskip-v4-LSTM.svg" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//PongNoFrameskip-v4-LSTM.svg" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BeamRiderNoFrameskip-v4-LSTM.svg" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked Atari LSTM experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Atari-Our-PPO-LSTM-vs-openai-baselines-PPO-LSTM--VmlldzoxODAxMzQ5" style="width:100%; height:500px" title="Tracked Atari LSTM experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<h2 id="1-multidiscrete-action-space-detail">1 <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action space detail</h2>
+
+<p>The <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> space is often useful to describe action space for more complicated games. The Gym’s official documentation explains <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action space as follows:</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># https://github.com/openai/gym/blob/2af816241e4d7f41a000f6144f22e12c8231a112/gym/spaces/multi_discrete.py#L8-L25
+</span><span class="k">class</span> <span class="nc">MultiDiscrete</span><span class="p">(</span><span class="n">Space</span><span class="p">):</span>
+    <span class="s">"""
+    - The multi-discrete action space consists of a series of discrete action spaces with different number of actions in each
+    - It is useful to represent game controllers or keyboards where each key can be represented as a discrete action space
+    - It is parametrized by passing an array of positive integers specifying number of actions for each discrete action space
+    Note: Some environment wrappers assume a value of 0 always represents the NOOP action.
+    e.g. Nintendo Game Controller
+    - Can be conceptualized as 3 discrete action spaces:
+        1) Arrow Keys: Discrete 5  - NOOP[0], UP[1], RIGHT[2], DOWN[3], LEFT[4]  - params: min: 0, max: 4
+        2) Button A:   Discrete 2  - NOOP[0], Pressed[1] - params: min: 0, max: 1
+        3) Button B:   Discrete 2  - NOOP[0], Pressed[1] - params: min: 0, max: 1
+    - Can be initialized as
+        MultiDiscrete([ 5, 2, 2 ])
+    """</span>
+    <span class="p">...</span>
+</code></pre></div></div>
+
+<p>Next, we introduce 1 detail for handling <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action space:</p>
+
+<ol>
+  <li>Independent action components (<a href="https://github.com/openai/baselines/blob/9b68103b737ac46bc201dfb3121cfa5df2127e53/baselines/common/distributions.py#L215-L220">common/distributions.py#L215-L220</a> <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>In <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action spaces, the actions are represented with multiple discrete values. For example, the action of \(a_t = [a^1_t, a^2_t] = [0, 1]\) might mean to press the up arrow key and press button A. To account for this difference, PPO treats \([a^1_t, a^2_t]\) as probabilistically independent action components, therefore calculating \(prob(a_t) = prob(a^1_t) \cdot prob(a^2_t)\).</li>
+      <li>AlphaStar (<a href="#Vinyals2019">Vinyals et al., 2019</a>)  and OpenAI Five (<a href="#Berner2019">Berner et al., 2019</a>) adopts the <code class="language-plaintext highlighter-rouge">MultiDiscrete</code> action spaces. For example, OpenAI Five’s action space is essentially <code class="language-plaintext highlighter-rouge">MultiDiscrete([ 30, 4, 189, 81 ])</code>, as shown by the following quote:
+        <blockquote>
+          <p>All together this produces a combined factorized action space size of up to 30 × 4 × 189 × 81 = 1, 837, 080 dimensions</p>
+        </blockquote>
+      </li>
+    </ul>
+  </li>
+</ol>
+
+<p>We make <a href="https://www.diffchecker.com/8fsnhwUI">~36 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> to incorporate this 1 detail, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_multidiscrete.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_multidiscrete.py">link</a>) that has 335 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_multidiscrete.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_multidiscrete" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_multidiscrete")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_multidiscrete.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+    });
+  });
+</script>
+
+<p>To run the experiments, we use the Atari hyperparameters again and use Gym-μRTS (<a href="#Huang2021">Huang et al, 2021</a>) as the simulation environment.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">gym_microrts</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">nsteps</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">nminibatches</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">lam</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span> <span class="n">noptepochs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">log_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">ent_coef</span><span class="o">=</span><span class="p">.</span><span class="mi">01</span><span class="p">,</span>
+        <span class="n">lr</span><span class="o">=</span><span class="k">lambda</span> <span class="n">f</span> <span class="p">:</span> <span class="n">f</span> <span class="o">*</span> <span class="mf">2.5e-4</span><span class="p">,</span>
+        <span class="n">cliprange</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div></div>
+
+<p>Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//MicrortsMining-v1.svg" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//MicrortsAttackShapedReward-v1.svg" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//MicrortsRandomEnemyShapedReward3-v1.svg" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked Gym-MicroRTS experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Gym-MicroRTS-Our-PPO-vs-openai-baselines-PPO--VmlldzoxODAxMzU5" style="width:100%; height:500px" title="Tracked Gym-MicroRTS experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<h2 id="4-auxiliary-implementation-details">4 Auxiliary implementation details</h2>
+
+<p>Next, we introduce 4 auxiliary techniques that are not used (by default) in the official PPO implementations but are potentially useful in special situations.</p>
+
+<ol>
+  <li>Clip Range Annealing (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/ppo2.py#L137">ppo2/ppo2.py#L137</a>)  <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>The clip coefficient of PPO can be annealed similar to how the learning rate is annealed. However, the clip range annealing is actually used by default.</li>
+    </ul>
+  </li>
+  <li>Parallellized Gradient Update (<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/ppo2/model.py#L131">ppo2/model.py#L131</a>)  <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>The policy gradient is calculated in parallel using multiple processes, mainly used in <code class="language-plaintext highlighter-rouge">ppo1</code> and not used by default in <code class="language-plaintext highlighter-rouge">ppo2</code>. Such as paradigm could improve training time by making use of all the available processes.</li>
+    </ul>
+  </li>
+  <li>Early Stopping of the policy optimizations (<a href="https://github.com/openai/spinningup/blob/038665d62d569055401d91856abb287263096178/spinup/algos/pytorch/ppo/ppo.py#L269-L271">ppo/ppo.py#L269-L271</a>) <span title="Detail related to code-level optimizations" class="detail-label red-label">Code-level Optimizations</span>
+    <ul>
+      <li>This is not actually an implementation detail of <em>openai/baselines</em>, but rather an implementation detail in John Schulman’s <a href="https://github.com/joschu/modular_rl/blob/5481b117aa30d3eb8e9ad79abce06378d60dcd45/modular_rl/ppo.py#L48">modular_rl</a> and <em>openai/spinningup</em> (<a href="https://github.com/openai/spinningup/blob/038665d62d569055401d91856abb287263096178/spinup/algos/tf1/ppo/ppo.py#L234">TF 1.x</a>, <a href="https://github.com/openai/spinningup/blob/038665d62d569055401d91856abb287263096178/spinup/algos/pytorch/ppo/ppo.py#L269-L271">Pytorch</a>). It can be considered as an additional mechanism to explicitly enforce the trust-region constraint, on top of the fixed hyperparameter <code class="language-plaintext highlighter-rouge">noptepochs</code> proposed in the original implementation by <a href="#Schulman2017">Schulman et al. (2017)</a>.</li>
+      <li>More specifically, it starts by tracking an approximate average KL divergence between the policy before and after one update step to its network weights. In case said KL divergence exceeds a preset threshold, the updates to the policy weights are preemptively stopped. <a href="#Dossa2021">Dossa et al.</a> suggest that early stopping can serve as an alternative method to tune the number of update epochs. We also included this early stopping method in our implementation <a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/eb40cbe172309dcda24a8e93a32269d819e5513d/ppo.py#L71">(via <code class="language-plaintext highlighter-rouge">--target-kl 0.01</code>)</a>, but toggled it off by default.</li>
+      <li>Note, however, that while <em>openai/spinningup</em> only early stops the updates to the policy, our implementation early stops both the policy and the value network updates.</li>
+    </ul>
+  </li>
+  <li>Invalid Action Masking (<a href="#Vinyals2017">Vinyals et al., 2017</a>; <a href="#HuangOntanon2020">Huang and Ontañón, 2020</a>) <span title="Detail related to theory" class="detail-label yellow-label">Theory</span>
+    <ul>
+      <li>Invalid action masking is a technique employed most prominently in AlphaStar (<a href="#Vinyals2019">Vinyals et al., 2019</a>)  and OpenAI Five (<a href="#Berner2019">Berner et al., 2019</a>) to avoid executing invalid actions in a given game state when the agents are being trained using policy gradient algorithms. Specifically, invalid action masking is implemented by replacing the logits corresponding to the invalid actions with negative infinity before passing the logits to softmax. <a href="#HuangOntanon2020">Huang and Ontañón, 2020</a> show such a paradigm <strong>actually makes the gradients corresponding to invalid actions zeros</strong>. Furthermore, <a href="#Huang2021">Huang et al, 2021</a> demonstrated invalid action masking to be the critical technique in training agents to win against all past μRTS bots they tested.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>Notably, we highlight the effect of invalid action masking. We make <a href="https://www.diffchecker.com/wBUb6Zne">~30 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo_multidiscrete.py</code> to incorporate invalid action masking, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_multidiscrete_mask.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_multidiscrete_mask.py">link</a>) that has 363 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo_multidiscrete.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_multidiscrete_mask.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_multidiscrete_mask" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_multidiscrete_mask")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_multidiscrete.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_multidiscrete_mask.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+      diffEditor.revealPositionInCenter({ lineNumber: 119, column: 0 });
+    });
+  });
+</script>
+
+<p>To run the experiments, we use the Atari hyperparameters again and use an older version of Gym-μRTS (<a href="#Huang2021">Huang et al, 2021</a>) as the simulation environment. Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//mask/MicrortsMining-v1.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//mask/MicrortsAttackShapedReward-v1.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//mask/MicrortsRandomEnemyShapedReward3-v1.png" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked Gym-MicroRTS + Action Mask experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Gym-MicroRTS-Our-PPO-mask-vs-Our-PPO-vs-vs-openai-baselines-PPO--VmlldzoxNDAwMTc3" style="width:100%; height:500px" title="Tracked Gym-MicroRTS + Action Mask experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<h1 id="results">Results</h1>
+
+<p>As shown under each section, our implementations match the results of the original implementation closely. This close matching also extends to other metrics such as policy and value losses. We have made an interactive HTML below for interested viewers to compare other metrics:</p>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Matching-the-metrics--VmlldzoxMzY5OTMy" style="width:100%; height:500px" title="Matching the metrics"></iframe>
+
+<h1 id="recommendations">Recommendations</h1>
+
+<p>During our reproduction, we have found a number of useful debugging techniques. They are as follows:</p>
+
+<ol>
+  <li><strong>Seed everything</strong>: One debugging approach is to seed everything and then observe when things start to differ from the reference implementation. So you could use the same seed for your implementation and mine, check if the observation returned by the environment is the same, then check if the sample the actions are the same. By following the steps, you would check everything to make sure they are aligned (e.g. print out <code class="language-plaintext highlighter-rouge">values.sum()</code> see if yours match the reference implementation). In the past, we have done this with the <a href="https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail">pytorch-a2c-ppo-acktr-gail</a> repository and ultimately figured out a bug with our implementation.</li>
+  <li><strong>Check if <code class="language-plaintext highlighter-rouge">ratio=1</code></strong>: Check if the <code class="language-plaintext highlighter-rouge">ratio</code> are always 1s during the first epoch and first mini-batch update, when new and old policies are the same and therefore the <code class="language-plaintext highlighter-rouge">ratio</code> are 1s and has nothing to clip. If <code class="language-plaintext highlighter-rouge">ratio</code> are not 1s, it means there is a bug and the program has not reconstructed the probability distributions used in rollouts.</li>
+  <li><strong>Check Kullback-Leibler (KL) divergence</strong>: It is often useful to check if KL divergence goes too high. We have generally found the <code class="language-plaintext highlighter-rouge">approx_kl</code> stays below 0.02, and if <code class="language-plaintext highlighter-rouge">approx_kl</code> becomes too high it usually means the policy is changing too quickly and there is a bug.</li>
+  <li><strong>Check other metrics</strong>: As shown in the Results section, the other metrics such as policy and value losses in our implementation also closely match those in the original implementation. So if your policy loss’ curve looks very different than the reference implementation, there might be a bug.</li>
+  <li><strong>Rule of thumb: 400 episodic return in breakout</strong>: Check if your PPO could obtain 400 episodic return in breakout. We have found this to be a practical rule of thumb to determine the fidelity of online PPO implementations in GitHub. Often we found PPO repositories not able to do this, and we know they probably do not match all implementation details of <code class="language-plaintext highlighter-rouge">openai/baselines</code>’ PPO.</li>
+</ol>
+
+<p>If you are doing research using PPO, consider adopting the following recommendations to help improve the reproducibility of your work:</p>
+
+<ol>
+  <li><strong>Enumerate implementation details used</strong>: If you have implemented PPO as the baseline for your experiment, you should specify which implementation details you are using. Consider using bullet points to enumerate them like done in this blog post.</li>
+  <li><strong>Release locked source code</strong>: Always open source your code whenever possible and make sure the code runs. We suggest adopting proper dependency managers such as <a href="https://python-poetry.org/">poetry</a> or <a href="https://pipenv.pypa.io/en/latest/">pipenv</a> to lock your dependencies. In the past, we have encountered numerous projects that are based on <code class="language-plaintext highlighter-rouge">pip install -e .</code>, which 80% of the time would fail to run due to some obscure errors. Having a pre-built <code class="language-plaintext highlighter-rouge">docker</code> image with all dependencies installed can also help in case the dependencies packages are not hosted by package managers after deprecation.</li>
+  <li><strong>Track experiments</strong>: Consider using an experiment management software to track your metrics, hyperparameters, code, and others. They can boost your productivity by saving hundreds of hours spent on <code class="language-plaintext highlighter-rouge">matplotlib</code> and worrying about how to display data. Commercial solutions (usually more mature) include <a href="https://wandb.ai/">Weights and Biases</a> and <a href="https://neptune.ai/">Neptune</a>, and open-source solutions include <a href="https://github.com/aimhubio/aim">Aim</a>, <a href="https://github.com/allegroai/clearml">ClearML</a>, <a href="https://github.com/polyaxon/polyaxon">Polyaxon</a>.</li>
+  <li><strong>Adopt single-file implementation</strong>: If your research requires more tweaking, consider implementing your algorithms using single-file implementations. This blog does this and creates standalone files for different environments. For example, our <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> contains all relevant code to handle Atari games. Such a paradigm has the following benefits at the cost of duplicate and harder-to-refactor code:
+    <ul>
+      <li><em>Easier to see the whole picture</em>: Because each file is self-contained, people can easily spot all relevant implementation details of the algorithm. Such a paradigm also reduces the burden to understand how files like <code class="language-plaintext highlighter-rouge">env.py</code>, <code class="language-plaintext highlighter-rouge">agent.py</code>, <code class="language-plaintext highlighter-rouge">network.py</code> work together like in typical RL libraries.</li>
+      <li><em>Faster developing experience</em>: Usually, each file like <code class="language-plaintext highlighter-rouge">ppo.py</code> has significantly less LOC compared to RL libraries’ PPO. As a result, it’s often easier to prototype new features without having to do subclassing and refactoring.</li>
+      <li><em>Painless performance attribution</em>: If a new version of our algorithm has obtained higher performance, we know this single file is exactly responsible for the performance improvement. To attribute the performance improvement, we can simply do a <code class="language-plaintext highlighter-rouge">filediff</code> between the current and past versions, and every line of code change is made explicit to us.</li>
+    </ul>
+  </li>
+</ol>
+
+<h1 id="discussions">Discussions</h1>
+
+<h2 id="does-modularity-help-rl-libraries">Does modularity help RL libraries?</h2>
+
+<p>This blog post demonstrates reproducing PPO is a non-trivial effort, even though PPO’s source code is readily available for reference. Why is it the case? We think one important reason might be that  <strong>modularity disperses implementation details</strong>.</p>
+
+<p>Almost all RL libraries have adopted modular design, featuring different modules / files like <code class="language-plaintext highlighter-rouge">env.py</code>, <code class="language-plaintext highlighter-rouge">agent.py</code>, <code class="language-plaintext highlighter-rouge">network.py</code>, <code class="language-plaintext highlighter-rouge">utils.py</code>, <code class="language-plaintext highlighter-rouge">runner.py</code>, etc. The nature of modularity necessarily puts implementation details into different files, which is usually great from a software engineering perspective. That is, we don’t have to know how other components work when we just work on <code class="language-plaintext highlighter-rouge">env.py</code>. Being able to treat other components as black boxes has empowered us to work on large and complicated systems for the last decades.</p>
+
+<p>However, this practice might clash hard with ML / RL: as the library grows, it becomes harder and harder to grasp all implementation details w.r.t an algorithm, whereas recognizing all implementation details has become increasingly important, as indicated by this blog post, <a href="#Engstrom">Engstrom, Ilyas, et al., 2020</a>, and <a href="#Andrychowicz">Andrychowicz, et al., 2021</a>. So what can we do?</p>
+
+<p>Modular design still offers numerous benefits such as 1) easy-to-use interface, 2) integrated test cases, 3) easy to plug different components and others. To this end, good RL libraries are valuable, and we recommend them to write good documentation and refactor libraries to adopt new features. For algorithmic researchers, however, we recommend considering single-file implementations because they are straightforward to read and extend.</p>
+
+<h2 id="is-asynchronous-ppo-better">Is asynchronous PPO better?</h2>
+
+<p>Not necessarily. The high-throughput variant Asynchronous PPO (APPO) (<a href="#Berner2019">Berner et al., 2019</a>) has obtained more attention in recent years. APPO eliminates the idle time in the original PPO implementation (e.g., have to wait for all $N$ environments to return observations), resulting in much higher throughput, GPU and CPU utilization. However, APPO involves performance-reducing side-effects, namely stale experiences (<a href="#IMPALA">Espeholt et al., 2018</a>), and we have found insufficient evidence to ascertain its improvement. The biggest issue is:</p>
+
+<p><strong>Underbenchmarked APPO implementation</strong>: RLlib has an <a href="https://docs.ray.io/en/latest/rllib-algorithms.html#appo">APPO implementation</a>, yet its documentation contains no benchmark information and suggest “APPO is not always more efficient; it is often better to use standard PPO or IMPALA.” Sample Factory (<a href="#Petrenko">Petrenko et al, 2020</a>) presents more benchmark results, but its support for Atari games is still a <a href="https://github.com/alex-petrenko/sample-factory/issues/51">work in progress</a>. To our knowledge, there is no APPO implementation that simultaneously works with Atari games, MuJoCo or Pybullet tasks, MultiDiscrete action spaces and with an LSTM.</p>
+
+<p>While APPO is intuitively valuable for CPU-intensive tasks such as Dota 2, this blog post recommends an alternative approach to speed up PPO: <strong>make the vectorized environments really fast</strong>. Initially, the vectorized environments are implemented in python, which is slow. More recently, researchers have proposed to use accelerated vectorized environments. For example,</p>
+<ol>
+  <li>Procgen <a href="#Cobbe">(Cobbe et al, 2020)</a> uses C++ to implement native vectorized environments, resulting in much higher throughput when setting $N=64$ ($N$ is the number of environments),</li>
+  <li><a href="https://github.com/sail-sg/envpool">Envpool</a> uses C++ to offer native vectorized environments for Atari and classic control games,</li>
+  <li>Nvidia’s <a href="https://developer.nvidia.com/isaac-gym">Isaac Gym</a> <a href="#Makoviychuk">(Makoviychuk et al., 2021)</a> uses <code class="language-plaintext highlighter-rouge">torch</code> to write hardware-accelerated vectorized environments, allowing the users to spin up $N=4096$ environments easily,</li>
+  <li>Google’s <a href="https://github.com/google/brax">Brax</a> uses jax to write hardware-accelerated vectorized environments, allowing the users to spin up $N=2048$ environments easily and solve robotics tasks like <code class="language-plaintext highlighter-rouge">Ant</code> in minutes compared to hours of training in MuJoCo.</li>
+</ol>
+
+<p>In the following section, we demonstrate accelerated training with PPO + envpool in the Atari game Pong.</p>
+
+<h3 id="solving-pong-in-5-minutes-with-ppo--envpool">Solving Pong in 5 minutes with PPO + Envpool</h3>
+
+<p><a href="https://github.com/sail-sg/envpool">Envpool</a> is a recent work that offers accelerated vectorized environments for Atari by leveraging C++ and thread pools. Our PPO gets a free and side-effects-free performance boost by simply adopting it. We make <a href="https://www.diffchecker.com/RafLuYD6">~60 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> to incorporate this 1 detail, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_atari_envpool.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_atari_envpool.py">link</a>) that has 365 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_atari_envpool.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_atari_envpool" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_atari_envpool")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari_envpool.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+    });
+  });
+</script>
+
+<p>As shown below, Envpool + PPO runs 3x faster without side effects (as in no loss of sample efficiency):</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Breakouts.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Pongs.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BeamRiders.png" />
+</div>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Breakout.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Pong.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BeamRider.png" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked Atari + Envpool experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Envpool-Our-PPO-envpool-vs-Our-PPO-vs-openai-baselines-PPO--VmlldzoxNDM3ODQz" style="width:100%; height:500px" title="Tracked Atari + Envpool experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+<p>Two quick notes: 1) the performance deterioration in BeamRider is largely due to a degenerate random seed, and 2) Envpool uses the v5 ALE environments but has processed them the same way as the v4 ALE environments used in our previous experiments. Furthermore, by tuning the hyperparameters, we obtained a run that solves Pong in 5 mins. This performance is even comparable to IMPALA’s (<a href="#IMPALA">Espeholt et al., 2018</a>) results:</p>
+
+<div class="grid-container">
+
+
+<div>
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//Envpool's Pong-v5.png" />
+<hr />
+<a href="https://github.com/vwxyzjn/ppo-implementation-details#atari-with-envpool">Pong in 5 mins from us</a>, 24 CPU and a RTX 2060
+</div>
+
+
+<div>
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//IMPALA_Pong-PARL.jpeg" /> 
+<hr />
+<a href="https://github.com/PaddlePaddle/PARL/tree/042cc25ee611fb70ea3804a6c7ed584165e406ec/benchmark/fluid/IMPALA">Pong in 10 mins from PARL</a>, one learner (in a P40 GPU) and 32 actors (in 32 CPUs)
+</div>
+
+
+<div>
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//RLLIB's PONG.png" />
+<hr />
+<a href="https://github.com/ray-project/rl-experiments/tree/9543891717cd0f8e137e23812229a06f8ed1c6c2#pong-in-3-minutes">Pong in 3 mins from RLLib</a>, 32, 64, 128 CPUs and presumably a GPU
+</div>
+
+
+<div>
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//SeedRL's IMPALA.png" />
+<hr />
+<a href="https://arxiv.org/pdf/1910.06591.pdf">Pong in ~45 mins from SeedRL</a>, 8 TPUv3 cores, 610 actors
+</div>
+
+</div>
+
+<p>We think this raises a practical consideration: adopting async RL such as IMPALA could be more difficult than just making your vectorized environments fast.</p>
+
+<h2 id="request-for-research">Request for Research</h2>
+
+<p>Given this blog post, we believe the community understands PPO better and would be in a much better place to make improvements. Here are a few suggested areas for research.</p>
+
+<ol>
+  <li><strong>Alternative choices</strong>: As we have walked through the different details of PPO, it seems that some of them result from arbitrary choices.
+It would be interesting to investigate alternative choices and see how such change affects results. You can find below a non-exhaustive list of tracks to explore:
+    <ul>
+      <li>use of a different Atari pre-processing (as partially explored by <a href="#Machado2018">Machado et al., 2018)</a>)</li>
+      <li>use of a different distribution for continuous actions (<a href="http://proceedings.mlr.press/v70/chou17a/chou17a.pdf">Beta distribution</a>, squashed Gaussian, Gaussian with full covariance, …), it will most probably require some tuning</li>
+      <li>use of a state-dependent standard deviation when using continuous actions (with or without backpropagation of the gradient to the whole actor network)</li>
+      <li>use of a different initialization for LSTM (ones instead of zeros, random noise, learnable parameter, …), use of GRU cells instead of LSTM</li>
+    </ul>
+  </li>
+  <li><strong>Vectorized architecture for experience-replay-based methods</strong>: Experience-replay-based methods such as DQN, DDPG, and SAC are less popular than PPO due to a few reasons: 1) they generally have lower throughput due to a single simulation environment (also means lower GPU utilization), and 2) they usually have higher memory requirement (e.g., DQN requires the notorious 1M sample replay buffer which could take 32GB memory). Can we apply the vectorized architecture to experience-replay-based methods? The vectorized environments intuitively should replace replay buffer because the environments could also provide uncorrelated experience.</li>
+  <li><strong>Value function optimization</strong>:  In Phasic Policy Gradient (<a href="#Cobbe2021">Cobbe et al., 2021</a>), optimizing value functions separately turns out to be important. In DQN, the prioritized experience replay significantly boosts performance. Can we apply prioritized experience replay to PPO or just on PPO’s value function?</li>
+</ol>
+
+<h1 id="conclusion">Conclusion</h1>
+
+<p>Reproducing PPO’s results has been difficult in the past few years. While recent works conducted ablation studies to provide insight on the implementation details, these works are not structured as tutorials and only focus on details concerning robotics tasks. As a result, reproducing PPO from scratch can become a daunting experience. Instead of introducing additional improvements or doing further ablation studies, this blog post takes a step back and focuses on delivering a thorough reproduction of PPO in all accounts, as well as aggregating, documenting, and cataloging its most salient implementation details. This blog post also points out software engineering challenges in PPO and further efficiency improvement via the accelerated vectorized environments. With these, we believe this blog post will help people understand PPO faster and better, facilitating customization and research upon this versatile RL algorithm.</p>
+
+<h1 id="acknowledgment">Acknowledgment</h1>
+
+<p>We thank <a href="https://wandb.ai">Weights and Biases</a> for providing a free academic license that helps us track the experiments. Shengyi would like to personally thank Angelica Pan, Scott Condron, Ivan Goncharov, Morgan McGuire, Jeremy Salwen, Cayla Sharp, Lavanya Shukla, and Aakarshan Chauhan for supporting him in making the video tutorials.</p>
+
+<h3 id="bibliography">Bibliography</h3>
+<p><a href="http://arxiv.org/abs/1707.06347" name="Schulman2017">Schulman J, Wolski F, Dhariwal P, Radford A, Klimov O. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347. 2017 Jul 20.</a></p>
+
+<p><a href="http://arxiv.org/abs/1707.06347" name="Schulman2015b"> Schulman, J., Moritz, P., Levine, S., Jordan, M., &amp; Abbeel, P. (2015). High-dimensional continuous control using generalized advantage estimation. arXiv preprint arXiv:1506.02438.</a></p>
+
+<p><a href="https://openreview.net/forum?id=r1etN1rtPB" name="Engstrom">Engstrom L, Ilyas A, Santurkar S, Tsipras D, Janoos F, Rudolph L, Madry A. Implementation matters in deep policy gradients: A case study on ppo and trpo. International Conference on Learning Representations, 2020</a></p>
+
+<p><a href="https://openreview.net/forum?id=nIAxjsniDzg" name="Andrychowicz">Andrychowicz M, Raichuk A, Stańczyk P, Orsini M, Girgin S, Marinier R, Hussenot L, Geist M, Pietquin O, Michalski M, Gelly S. What matters in on-policy reinforcement learning? a large-scale empirical study.  International Conference on Learning Representations, 2021</a></p>
+
+<p><a href="https://www.nature.com/articles/nature14236" name="Mnih2015">Mnih V, Kavukcuoglu K, Silver D, Rusu AA, Veness J, Bellemare MG, Graves A, Riedmiller M, Fidjeland AK, Ostrovski G, Petersen S. Human-level control through deep reinforcement learning. nature. 2015 Feb;518(7540):529-33.</a></p>
+
+<p><a href="https://arxiv.org/abs/1709.06009" name="Machado2018">Machado MC, Bellemare MG, Talvitie E, Veness J, Hausknecht M, Bowling M. Revisiting the arcade learning environment: Evaluation protocols and open problems for general agents. Journal of Artificial Intelligence Research. 2018 Mar 19;61:523-62.</a></p>
+
+<p><a href="http://proceedings.mlr.press/v37/schulman15" name="Schulman2015">Schulman J, Levine S, Abbeel P, Jordan M, Moritz P. Trust region policy optimization. In International conference on machine learning 2015 Jun 1 (pp. 1889-1897). PMLR.</a></p>
+
+<p><a href="http://proceedings.mlr.press/v48/duan16.html" name="Duan2016">Duan Y, Chen X, Houthooft R, Schulman J, Abbeel P. Benchmarking deep reinforcement learning for continuous control. In International conference on machine learning 2016 Jun 11 (pp. 1329-1338). PMLR.</a></p>
+
+<p><a href="http://proceedings.mlr.press/v80/haarnoja18b" name="Haarnoja2018">Haarnoja T, Zhou A, Abbeel P, Levine S. Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In International conference on machine learning 2018 Jul 3 (pp. 1861-1870). PMLR.</a></p>
+
+<p><a href="https://www.ri.cmu.edu/wp-content/uploads/2017/06/thesis-Chou.pdf" name="Chou2017"> Chou PW. The beta policy for continuous control reinforcement learning (Doctoral dissertation, Master’s thesis. Pittsburgh: Carnegie Mellon University). 2017. </a></p>
+
+<p><a href="http://proceedings.mlr.press/v80/fujita18a.html" name="Fujita2018">Fujita Y, Maeda SI. Clipped action policy gradient. In International Conference on Machine Learning 2018 Jul 3 (pp. 1597-1606). PMLR.</a></p>
+
+<p><a href="https://proceedings.neurips.cc/paper/2016/file/afda332245e2af431fb7b672a68b659d-Paper.pdf" name="Bellemare2016b">Bellemare M, Srinivasan S, Ostrovski G, Schaul T, Saxton D, Munos R. Unifying count-based exploration and intrinsic motivation. Advances in neural information processing systems. 2016;29:1471-9.</a></p>
+
+<p><a href="https://ojs.aaai.org/index.php/AAAI/article/view/11798" name="Tavakoli2018"> Tavakoli A, Pardo F, Kormushev P. Action branching architectures for deep reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence 2018 Apr 29 (Vol. 32, No. 1). </a></p>
+
+<p><a href="https://arxiv.org/abs/1705.05035" name="Metz2019"> Metz L, Ibarz J, Jaitly N, Davidson J. Discrete sequential prediction of continuous actions for deep rl. arXiv preprint arXiv:1705.05035. 2017 May 14. </a></p>
+
+<p><a href="https://arxiv.org/abs/1806.00589" name="Zhang2018"> Zhang Y, Vuong QH, Song K, Gong XY, Ross KW. Efficient entropy for policy gradient with multidimensional action space. arXiv preprint arXiv:1806.00589. 2018 Jun 2.</a></p>
+
+<p><a href="https://arxiv.org/abs/2006.14171" name="HuangOntanon2020"> Huang S, Ontañón S. A closer look at invalid action masking in policy gradient algorithms. arXiv preprint arXiv:2006.14171. 2020 Jun 25.</a></p>
+
+<p><a href="https://ieeexplore.ieee.org/document/9619076" name="Huang2021"> Huang, S., Ontan’on, S., Bamford, C., &amp; Grela, L. Gym-μRTS: Toward Affordable Full Game Real-time Strategy Games Research with Deep Reinforcement Learning. In Proceedings of the 2021 IEEE Conference on Games (CoG).</a></p>
+
+<p><a href="https://doi.org/10.1038/s41586-019-1724-z" name="Vinyals2019"> Vinyals O, Babuschkin I, Czarnecki WM, Mathieu M, Dudzik A, Chung J, Choi DH, Powell R, Ewalds T, Georgiev P, Oh J. Grandmaster level in StarCraft II using multi-agent reinforcement learning. Nature. 2019 Nov;575(7782):350-4.</a></p>
+
+<p><a href="https://arxiv.org/abs/1912.06680" name="Berner2019"> Berner C, Brockman G, Chan B, Cheung V, Dębiak P, Dennison C, Farhi D, Fischer Q, Hashme S, Hesse C, Józefowicz R. Dota 2 with large scale deep reinforcement learning. arXiv preprint arXiv:1912.06680. 2019 Dec 13.</a></p>
+
+<p><a href="https://arxiv.org/abs/1708.04782" name="Vinyals2017">
+Vinyals O, Ewalds T, Bartunov S, Georgiev P, Vezhnevets AS, Yeo M, Makhzani A, Küttler H, Agapiou J, Schrittwieser J, Quan J. Starcraft ii: A new challenge for reinforcement learning. arXiv preprint arXiv:1708.04782. 2017 Aug 16.</a></p>
+
+<p><a href="https://ieeexplore.ieee.org/document/9520424" name="Dossa2021">
+Dossa RF, Huang S, Ontañón S, Matsubara T. An Empirical Investigation of Early Stopping Optimizations in Proximal Policy Optimization. IEEE Access. 2021 Aug 23;9:117981-92.</a></p>
+
+<p><a href="https://arxiv.org/abs/1802.01561" name="IMPALA">
+Espeholt L, Soyer H, Munos R, Simonyan K, Mnih V, Ward T, Doron Y, Firoiu V, Harley T, Dunning I, Legg S. Impala: Scalable distributed deep-rl with importance weighted actor-learner architectures. InInternational Conference on Machine Learning 2018 Jul 3 (pp. 1407-1416). PMLR.</a></p>
+
+<p><a href="https://arxiv.org/abs/2006.11751" name="Petrenko">
+Petrenko A, Huang Z, Kumar T, Sukhatme G, Koltun V. Sample factory: Egocentric 3d control from pixels at 100000 fps with asynchronous reinforcement learning. InInternational Conference on Machine Learning 2020 Nov 21 (pp. 7652-7662). PMLR.</a></p>
+
+<p><a href="https://arxiv.org/abs/2108.10470" name="Makoviychuk">
+Makoviychuk, V., Wawrzyniak, L., Guo, Y., Lu, M., Storey, K., Macklin, M., Hoeller, D., Rudin, N., Allshire, A., Handa, A., &amp; State, G. (2021). Isaac Gym: High Performance GPU-Based Physics Simulation For Robot Learning. ArXiv, abs/2108.10470.</a></p>
+
+<p><a href="https://arxiv.org/abs/1912.01588" name="Cobbe">
+Cobbe, K., Hesse, C., Hilton, J., &amp; Schulman, J. (2020, November). Leveraging procedural generation to benchmark reinforcement learning. In International conference on machine learning (pp. 2048-2056). PMLR.</a></p>
+
+<p><a href="https://arxiv.org/pdf/2009.14471.pdf" name="Terry">
+Terry, J.K., Black, B., Hari, A., Santos, L., Dieffendahl, C., Williams, N.L., Lokesh, Y., Horsch, C., &amp; Ravi, P. (2020). Pettingzoo: Gym for multi-agent reinforcement learning. Advances in Neural Information Processing Systems, 34..</a></p>
+
+<h1 id="appendix">Appendix</h1>
+
+<p>In this appendix, we introduce one detail for reproducing PPO’s results in the procgen environments <a href="#Cobbe">(Cobbe et al, 2020)</a>.</p>
+
+<ol>
+  <li>IMPALA-style Neural Network
+(<a href="https://github.com/openai/baselines/blob/ea25b9e8b234e6ee1bca43083f8f3cf974143998/baselines/common/models.py#L28">common/models.py#L28</a>) <span title="Detail related to neural network" class="detail-label blue-label">Neural Network</span>
+    <ul>
+      <li>In the <a href="https://github.com/openai/train-procgen">openai/train-procgen</a> repository, the authors by default uses the IMPALA-style Neural Network (<a href="https://github.com/openai/train-procgen/blob/1a2ae2194a61f76a733a39339530401c024c3ad8/train_procgen/train.py#L52">train_procgen/train.py#L52</a>, also see see (<a href="#IMPALA">Espeholt et al., 2018</a>) without the LSTM layers.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>We make <a href="https://www.diffchecker.com/82aRqGuz">~60 lines of code</a> change to <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> to incorporate these 5 details, resulting in a self-contained <code class="language-plaintext highlighter-rouge">ppo_procgen.py</code> (<a href="https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_procgen.py">link</a>) that has 354 lines of code. The following shows the file difference between the <code class="language-plaintext highlighter-rouge">ppo_atari.py</code> (left) and <code class="language-plaintext highlighter-rouge">ppo_procgen.py</code> (right).</p>
+
+<div style="padding-bottom: 20px;">
+	<div id="ppo_procgen" style="width: 100%; height: 600px; border: 1px solid grey"></div>
+</div>
+
+<script>
+  require(["vs/editor/editor.main"], function () {
+    var diffEditor = monaco.editor.createDiffEditor(
+      document.getElementById("ppo_procgen")
+    );
+
+	
+    Promise.all([
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_atari.py"),
+		xhr("/public/images/2022-03-25-ppo-implementation-details/algo/ppo_procgen.py")
+	]).then(function (r) {
+      var originalTxt = r[0].responseText;
+      var modifiedTxt = r[1].responseText;
+
+      diffEditor.setModel({
+        original: monaco.editor.createModel(originalTxt, "python"),
+        modified: monaco.editor.createModel(modifiedTxt, "python"),
+      });
+    });
+  });
+</script>
+
+<p>To run the experiment, we try to match the default setting in <a href="https://github.com/openai/train-procgen">openai/train-procgen</a> except that we use the <code class="language-plaintext highlighter-rouge">easy</code> distribution mode and <code class="language-plaintext highlighter-rouge">total_timesteps=25e6</code> to save compute.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">procgen</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">nsteps</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">nminibatches</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+        <span class="n">lam</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">noptepochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">log_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">ent_coef</span><span class="o">=</span><span class="p">.</span><span class="mi">01</span><span class="p">,</span>
+        <span class="n">lr</span><span class="o">=</span><span class="mf">5e-4</span><span class="p">,</span>
+        <span class="n">cliprange</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+        <span class="n">vf_coef</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>  <span class="n">max_grad_norm</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+    <span class="p">)</span>
+<span class="n">network</span> <span class="o">=</span> <span class="n">build_impala_cnn</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">depths</span><span class="o">=</span><span class="p">[</span><span class="mi">16</span><span class="p">,</span><span class="mi">32</span><span class="p">,</span><span class="mi">32</span><span class="p">],</span> <span class="n">emb_size</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>
+<span class="n">env</span> <span class="o">=</span> <span class="n">ProcgenEnv</span><span class="p">(</span>
+    <span class="n">num_envs</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+    <span class="n">env_name</span><span class="o">=</span><span class="s">"starpilot"</span><span class="p">,</span>
+    <span class="n">num_levels</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">start_level</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">distribution_mode</span><span class="o">=</span><span class="s">"easy"</span>
+<span class="p">)</span>
+<span class="n">env</span> <span class="o">=</span> <span class="n">VecNormalize</span><span class="p">(</span><span class="n">venv</span><span class="o">=</span><span class="n">env</span><span class="p">,</span> <span class="n">ob</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+<span class="n">ppo2</span><span class="p">.</span><span class="n">learn</span><span class="p">(...,</span> <span class="n">total_timesteps</span> <span class="o">=</span> <span class="mi">25_000_000</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p>Notice that</p>
+
+<ol>
+  <li>Learning rate annealing is turned off by default.</li>
+  <li>Reward scaling and reward clipping is used.</li>
+</ol>
+
+<p>Below are the benchmarked results.</p>
+
+<div class="grid-container">
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//StarPilot.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BossFight.png" />
+
+<img src="https://iclr-blog-track.github.io/public/images/2022-03-25-ppo-implementation-details//BigFish.png" />
+</div>
+
+<blockquote>
+  <details>
+<summary>Tracked Procgen experiments<small> (click to show the interactive panel)</small></summary>
+
+<iframe src="https://wandb.ai/vwxyzjn/ppo-details/reports/Procgen-Our-PPO-vs-openai-baselines-PPO--VmlldzoxNTAxOTY0" style="width:100%; height:500px" title="Tracked Procgen experiments in an interactive panel"></iframe>
+
+</details>
+</blockquote>
+
+</div>
+
+<div id="bibtex-container" class="related">
+  For attribution in academic contexts, please cite this work as
+  <pre id="bibtex-academic-attribution">
+
+  </pre>
+
+  BibTeX citation
+  <pre id="bibtex-box">
+
+  </pre>
+</div>
+<script>
+  let authorsSpan = document.getElementById("iclr-post-authors");
+  let authorsText = authorsSpan.textContent.replace(/\(.*?\)/g, "");
+  let lnameFnameInstitution = authorsText.split(";");
+  let lfiList = lnameFnameInstitution.map(lfi => lfi.split(",").map(item => item.trim()));
+  let bibtexLFI = lfiList.map(lfi => lfi[0] + ", " + lfi[1]).join(" and ")
+  let academicLFI = lfiList.map(lfi => lfi[0]);
+  {
+    if(academicLFI.length > 2) academicLFI = academicLFI[0] + ", et al.";
+    else if(academicLFI.length == 2) academicLFI = academicLFI[0] + " & " + academicLFI[1];
+    else academicLFI = academicLFI[0];
+  }
+
+  let titleSpan = document.getElementById("iclr-post-title");
+  let titleText = titleSpan.textContent.trim();
+  let bibtexTitleShorthand = (lfiList[0][1]+
+    "2022"+
+    titleText.split(" ").slice(0, 3).join("")
+  ).replace(" ", "").replace(/[\p{P}$+<=>^`|~]/gu, '').toLowerCase().trim();
+
+  let bibtexTemplate = `
+@inproceedings{${bibtexTitleShorthand},
+  author = {${bibtexLFI}},
+  title = {${titleText}},
+  booktitle = {ICLR Blog Track},
+  year = {2022},
+  note = {${window.location.href}},
+  url  = {${window.location.href}}
+}
+  `.trim();
+  document.getElementById("bibtex-box").innerText = bibtexTemplate;
+
+  let academicTemplate = `
+${academicLFI}, "${titleText}", ICLR Blog Track, 2022.
+`.trim();
+  document.getElementById("bibtex-academic-attribution").innerText = academicTemplate;
+
+</script>
+
+
+<!---
+<script src="https://utteranc.es/client.js"
+        repo="iclr-blog-track/iclr-blog-track.github.io"
+        issue-term="pathname"
+        label="utterance"
+        theme="boxy-light"
+        crossorigin="anonymous"
+        >
+</script>
+--->
+
+<div style="font-weight: bold; font-size: 14pt"> You will need to sign in to GitHub to add a comment! To edit or delete your comment, visit the <a href="https://github.com/iclr-blog-track/iclr-blog-track.github.io/discussions">discussions page</a> and look for your comment in the right discussion.</div>
+
+<script src="https://giscus.app/client.js"
+        data-repo="iclr-blog-track/iclr-blog-track.github.io"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzNzc2NjUzNDY="
+        data-category="General"
+        data-category-id="DIC_kwDOFoK3Qs4COQHd"
+        data-mapping="pathname"
+        data-reactions-enabled="1"
+        data-emit-metadata="0"
+        data-input-position="bottom"
+        data-theme="light"
+        data-lang="en"
+        data-loading="lazy"
+        crossorigin="anonymous"
+        async>
+</script>
+
+      </div>
+    </div>
+
+    <label for="sidebar-checkbox" class="sidebar-toggle"></label>
+
+    <script src='/public/js/script.js'></script>
+  </body>
+</html>

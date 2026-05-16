@@ -1,0 +1,140 @@
+# drl_intraday — proposal spec (DRL_proposal_6509_6571.pdf)
+# DDQN first, then A2C, then PPO under the same MDP & env.
+# See CLAUDE.md for design notes and journal.
+
+data:
+  path: data/GOLD_M1_last750_trading_days_to_2026-05-01.parquet
+  window_days: 750           # full ~3-year dataset
+  # Absolute day counts (chronological). Sum must equal window_days.
+  # 600/75/75 enables 5-fold expanding-window inner CV on train.
+  n_train: 600
+  n_val: 75
+  n_test: 75
+
+# Inner cross-validation for HPO (operates on train split only — val/test untouched).
+# Expanding-window with equal val size per fold (Option A in design notes).
+# fold k val ends at train_dates[n_train - (n_folds-k)*val_size]; first fold's
+# inner-train = train_dates[: n_train - n_folds*val_size].
+cv:
+  n_folds: 5
+  val_size: 24              # days per fold; 5*24=120 last days of train become val across folds
+  agg_penalty: 0.5          # trial score = mean(fold_scores) - agg_penalty * std(fold_scores)
+  min_trades: 50            # disqualify trial if val_trades < this (filters degenerate "do-nothing" policies)
+  objective_metric: sortino # which val metric to optimize. one of: total_return, sharpe, sortino
+
+features:
+  return_windows: [1, 5, 15, 30, 60]   # 5 close-return windows in M1 bars
+  macd_short: 12
+  macd_long: 26
+  sto_window: 14
+  rsi_window: 14
+  atr_window: 14
+
+env:
+  action_space: [-1, 0, 1]   # Exp 1 (3 actions): short / flat / long, target-position semantics
+  # action_space: [-1, -0.5, 0, 0.5, 1]                    # Exp 2a (5 actions)
+  # action_space: [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # Exp 2b (9 actions)
+
+  # ---- portfolio / contract (PROPOSAL.md Sec. 3.1-3.3) ----
+  capital: 10000.0           # C0, reset each episode (episodes independent)
+  lot: 0.01                  # fixed lot size; 1 lot = 100 oz on XAUUSD
+  contract_size: 100.0       # oz per standard lot
+  # spread_pts column -> dollars = spread_pts * spread_point_size * contract_size * lot.
+  # MT5 XAUUSD: 1 point = 0.01 price unit -> $0.01 * 100 * 0.01 = $0.01 per spread point per 0.01 lot.
+  spread_point_size: 0.01
+
+  # ---- reward (PROPOSAL.md Sec. 3.6, Exp 0 = reward selection) ----
+  reward:
+    mode: r1                 # r1 = log-return of equity (control); r2 = dollar P&L; r4 = P&L - DD penalty
+    normalize: false         # 2026-05-16: A/B disproved Sec 6.4 — running-std amplifies R1's
+                             # ~1e-4/bar to ~unit/bar via tiny early-training std, causing Q-net
+                             # to collapse to flat. Disabled. Per-reward lr (dqn.lr_per_reward)
+                             # handles the R1 vs R2/R4 ~10^5 scale gap instead.
+    beta: 1.0                # R4 only: drawdown penalty weight (Exp-1 HPO target on the winning reward)
+    dd_thresh: 0.02          # R4 only: drawdown tolerance tau (0.02 = 2%)
+    ruin_reward: -1.0        # fixed clipped reward when equity<=0 (terminates episode)
+
+dqn:
+  hidden_sizes: [128, 128]
+  gamma: 0.99
+  lr: 0.0045                 # base lr (used as-is for R1; R2/R4 override below — see run_exp0.py)
+  # Per-reward lr override (post-A/B 2026-05-16): R1 raw scale ~1e-4/bar -> lr=0.0045 OK.
+  # R2/R4 raw scale ~$1-30/bar (~10^4-10^5 x larger) -> need much smaller lr or NaN.
+  # R2 lr triple-test (100k each) found 1e-5 trades reasonably (~636 test trades, eq=$9987);
+  # 4.5e-7 and 1e-6 were too low -> over-trading (17k-19k trades). Set R2/R4 = 1e-5.
+  # run_exp0.py applies this override when reward.mode is r2 or r4.
+  lr_per_reward:
+    r1: 0.0045
+    r2: 1.0e-5
+    r4: 1.0e-5
+  batch_size: 64
+  buffer_size: 100000
+  learning_starts: 1000
+  target_update_interval: 1000   # hard copy online -> target every N env steps
+  train_freq: 4                  # one gradient step every N env steps after learning_starts
+  gradient_steps: 1
+  exploration_fraction: 0.6      # ε linearly decays over this fraction of total_timesteps
+  exploration_initial_eps: 1.0
+  exploration_final_eps: 0.05
+  max_grad_norm: 10.0
+
+# A2C — actor-critic with shared trunk, episode-aligned rollouts.
+# 1 rollout = 1 full trading day (episode); update once per episode.
+a2c:
+  hidden_sizes: [128, 128]       # shared trunk dims; heads are linear on top
+  gamma: 0.99                    # discount factor (same as DDQN for fair comparison)
+  gae_lambda: 0.95               # GAE λ; 1.0 = Monte-Carlo, 0 = TD(0)
+  lr: 0.0007                     # base lr (R1 uses this); R2/R4 override below
+  # Per-reward lr override (post-A/B 2026-05-16): R2 raw ~$1-30/bar -> need ~10^4 lower
+  # lr or A2C gradient explodes. Quick R2 lr sweep at 100k each found lr=1e-5 best
+  # (43 stable val trades, eq=$10000). lr=1e-6 over-traded (1100), lr=1e-7 hyperactive.
+  lr_per_reward:
+    r1: 0.0007
+    r2: 1.0e-5
+    r4: 1.0e-5
+  value_coef: 0.5                # weight on value loss in combined objective
+  entropy_coef: 0.01             # entropy bonus for exploration
+  max_grad_norm: 0.5             # global L2 grad norm cap (lower than DQN; on-policy needs tighter)
+  normalize_advantage: true      # standardize advantage per rollout (recommended for our small reward scale)
+
+# PPO — same MDP/env as A2C/DDQN. Clipped surrogate objective + K epochs over each rollout
+# with minibatch SGD. 1 rollout = 1 full trading day (same episode-alignment as A2C).
+ppo:
+  hidden_sizes: [128, 128]       # shared trunk; tanh activations
+  gamma: 0.99
+  gae_lambda: 0.95
+  lr: 0.0003                     # base lr (R1 uses this); R2/R4 override below
+  # Per-reward lr override (post-A/B 2026-05-16): PPO is more sensitive than A2C
+  # because of K SGD epochs per rollout. R2 lr sweep at 100k found 1e-6 best
+  # (11 selective val trades, eq=$9999.98). lr=1e-5 collapsed PPO to flat (clip+SGD
+  # was too aggressive at that scale), lr=1e-7 over-traded. Note: PPO needs ~10x lower
+  # lr than A2C for R2 (consistent with default ratio 0.0003/0.0007 + K-epoch amplification).
+  lr_per_reward:
+    r1: 0.0003
+    r2: 1.0e-6
+    r4: 1.0e-6
+  clip_range: 0.2                # ε in the clipped surrogate objective
+  clip_range_vf: null             # null = no value clipping; set 0.2 to enable
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  n_epochs: 10                   # number of SGD epochs over each rollout
+  minibatch_size: 128            # bars per minibatch (rollout ~1000-1400 bars → ~8-11 minibatches)
+  target_kl: null                # null = no early-stop; set ~0.015 to stop epochs when KL exceeds
+  normalize_advantage: true
+
+train:
+  total_timesteps: 500000
+  eval_every_sessions: 22    # eval every N completed train sessions (1 session = 1 trading day). 22 = ~every 2 epochs (sessions_per_epoch=88 for inner-CV/600 for full train)
+  best_metric: total_return  # which val metric drives best-checkpoint + early-stop. one of: total_return, sharpe, sortino, final_equity
+  # Note (2026-05-16): sortino=0 from a do-nothing policy ties forever and triggers early-stop
+  # in 5 evals. total_return is strictly < 0 for any losing trade, so even a tiny improvement
+  # registers and patience is meaningful. Sortino is still computed/logged for reporting.
+  early_stop_patience: 20    # consecutive evals without val <best_metric> improvement before stopping. Raised from 5 because Exp-0 needs slack to escape the early "do-nothing" attractor (DDQN tends to collapse to flat when ε is high — only the late-ε phase produces signal).
+  log_interval: 1            # console log every N completed train episodes
+  seed: 42
+  device: cuda
+
+run:
+  output_root: runs
+  run_name: bakeoff
