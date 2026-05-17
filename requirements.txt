@@ -1,0 +1,21 @@
+# Core DRL & ML
+torch==2.5.1+cu121
+numpy==2.0.2
+gymnasium==1.1.1
+
+# Data
+pandas==2.3.3
+pyarrow==21.0.0
+
+# Experiment tracking
+tensorboard==2.20.0
+optuna==4.8.0
+
+# Config
+PyYAML==6.0.3
+
+# MT5 data feed
+MetaTrader5==5.0.5735
+
+# System diagnostics
+psutil==7.2.2
