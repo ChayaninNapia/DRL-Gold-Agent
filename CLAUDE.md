@@ -52,16 +52,19 @@ d:\EA\
     run_final.py        # pulls best HPO trial -> retrain 500k x seeds on full train -> test once -> runs/final_<algo>/
   runs/                 # one folder per run: metrics.csv, trades.csv, best.pt, summary.json; TB under runs/_tb/<run_name>/
   data/                 # datasets
-    GOLD_M1_last750_trading_days_to_2026-05-01.parquet  # current; superseded the 365-day file on 2026-05-15
+    GOLD_M1_last750_trading_days_to_2026-05-15.parquet  # current; updated 2026-05-18 (last date 2026-05-15)
+    SILVER_M1_last750_trading_days_to_2026-05-15.parquet  # added 2026-05-18
+    EURUSD_M1_last750_trading_days_to_2026-05-15.parquet  # added 2026-05-18
   research_papers/      # PDFs organised by topic
   tools/trade_viewer/   # web app: parquet viewer + trade-history candlestick chart (2 tabs, dark theme)
 ```
 
 ## Data Facts
 
-- Main dataset: `data/GOLD_M1_last750_trading_days_to_2026-05-01.parquet`
-- 1,027,754 rows, columns: `time` (datetime64 UTC), `open`, `high`, `low`, `close`, `tick_volume`, `spread`, `real_volume`
-- 750 trading days total (~2.9 years calendar: 2023-06-05 → 2026-04-30). We do **not** filter by session time — keep every M1 bar of each calendar date.
+- Main dataset: `data/GOLD_M1_last750_trading_days_to_2026-05-15.parquet`
+- 1,027,906 rows, columns: `time` (datetime64 UTC), `open`, `high`, `low`, `close`, `tick_volume`, `spread`, `real_volume`
+- 750 trading days total (~2.9 years calendar: 2023-06-20 → 2026-05-15). We do **not** filter by session time — keep every M1 bar of each calendar date.
+- Additional datasets (same 750-day window, all ending 2026-05-15): `SILVER_M1_last750_trading_days_to_2026-05-15.parquet` (1,026,260 rows, 2023-06-20 →), `EURUSD_M1_last750_trading_days_to_2026-05-15.parquet` (1,057,740 rows, 2023-07-11 →).
 - **Full window = 750 days → train/val/test = 600/75/75** (absolute day counts, chronological; no overlap). Configured via `data.n_train/n_val/n_test` in config.yaml — sum must equal `window_days`.
 - Episode length varies per day (~958–1379 M1 bars). Median 1379 (full session); short days are known holidays (Jan 2, Dec 24/26/31, Jul 4, Thanksgiving). Do not pad or truncate.
 

@@ -3,7 +3,7 @@
 # See CLAUDE.md for design notes and journal.
 
 data:
-  path: data/GOLD_M1_last750_trading_days_to_2026-05-01.parquet
+  path: data/GOLD_M1_last750_trading_days_to_2026-05-15.parquet
   window_days: 750           # full ~3-year dataset
   # Absolute day counts (chronological). Sum must equal window_days.
   # 600/75/75 enables 5-fold expanding-window inner CV on train.

@@ -8,10 +8,9 @@ import pandas as pd
 
 SYMBOL = "GOLD"
 TIMEFRAME = mt5.TIMEFRAME_M1
-DATE_TO = datetime(2026, 5, 1, tzinfo=timezone.utc)
+DATE_TO = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 TARGET_TRADING_DAYS = 750
-LOOKBACK_CALENDAR_DAYS = 1200
-OUTPUT_FILE = Path("data") / "GOLD_M1_last750_trading_days_to_2026-05-01.parquet"
+LOOKBACK_CALENDAR_DAYS = 1800  # ~5 years calendar buffer
 
 
 def main():
@@ -74,10 +73,12 @@ def main():
     df = df[df["trading_date"].isin(selected_dates)].copy()
     df = df.drop(columns=["trading_date"]).reset_index(drop=True)
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(OUTPUT_FILE, index=False)
+    last_date = str(selected_dates[-1])
+    output_file = Path("data") / f"GOLD_M1_last750_trading_days_to_{last_date}.parquet"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(output_file, index=False)
 
-    print(f"Saved {len(df)} rows to {OUTPUT_FILE}", flush=True)
+    print(f"Saved {len(df)} rows to {output_file}", flush=True)
     print(f"Trading days: {len(selected_dates)}", flush=True)
     print(f"First trading date: {selected_dates[0]}", flush=True)
     print(f"Last trading date:  {selected_dates[-1]}", flush=True)

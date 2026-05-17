@@ -33,15 +33,15 @@ ruin. This makes drawdown, capital preservation, and ruin first-class.
 
 ## 2. Dataset & Split
 
-- **Dataset:** `data/GOLD_M1_last750_trading_days_to_2026-05-01.parquet` —
-  1,027,754 M1 bars, 750 trading days, 2023-06-05 → 2026-04-30.
+- **Dataset:** `data/GOLD_M1_last750_trading_days_to_2026-05-15.parquet` —
+  1,027,906 M1 bars, 750 trading days, 2023-06-20 → 2026-05-15.
   Columns: `time` (UTC), `open`, `high`, `low`, `close`, `tick_volume`,
   `spread`, `real_volume`. Every M1 bar of each date is kept (no padding/truncation;
   episode length varies ~958–1379 bars).
 - **Split (chronological, absolute day counts, no overlap):**
-  - Train 600 days (2023-06-05 → 2025-09-29)
-  - Validation 75 days (2025-09-30 → 2026-01-14)
-  - Test 75 days (2026-01-15 → 2026-04-30)
+  - Train 600 days (2023-06-20 → 2025-10-14)
+  - Validation 75 days (2025-10-15 → 2026-01-29)
+  - Test 75 days (2026-01-30 → 2026-05-15)
 - **Inner cross-validation for HPO** (train split only; held-out val/test never
   touched during HPO):
   - Primary ("Aggressive", compute-constrained): **3-fold** expanding window,
