@@ -11,5 +11,9 @@ runs/*
 # Research papers (large PDFs, not version-controlled)
 research_papers/
 
+# Proposal folder — ignore everything except PROPOSAL.md
+proposal/*
+!proposal/PROPOSAL.md
+
 # Local Claude Code config
 .claude/
