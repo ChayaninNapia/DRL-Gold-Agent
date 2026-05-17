@@ -6,6 +6,70 @@ For the active project spec see **[proposal/PROPOSAL.md](proposal/PROPOSAL.md)**
 
 ---
 
+## 2026-05-17 — Sidecar exploration considered then reverted (kept here as a historical lessons-only note)
+
+### What happened
+
+After 0.5e (B1) confirmed the imitation branch is exhausted, a research-only sidecar experiment was briefly opened to explore how far an off-policy value-based agent could push net-of-realistic-cost profitability, parallel to the deliverable. Three parallel sub-agent reviews of `research_papers/` converged on a design (DAR-DDQN — Distributional Action-augmented Recurrent DDQN with DeepScalper auxiliary heads, staged ablation). Stage #1 (action augmentation, Huang 2018) was implemented and a 1-seed probe (seed=42, 300k steps) ran: baseline test_ret=-0.0143 vs aug test_ret=-0.0530, both did not collapse (val_trades 557/393). 1-seed result was insufficient to decide (seed 42 is the weak end of baseline per Exp 0.5a; aug showed late-improving val trajectory but worse test MDD 7.54% vs 2.33%), and the whole sidecar branch was **reverted on 2026-05-17 by user decision** to keep focus on the deliverable Exp 1.
+
+### Lessons preserved (sidecar reverted; insights still apply to deliverable)
+
+These are research findings that survive the revert because they describe the literature and the MDP, not the (now-reverted) sidecar code:
+
+1. **Honest profitability ceiling for single-asset intraday DRL with realistic cost is Sharpe 0.5–1.5, PF 1.05–1.15.** Evidence: MaxAI 2025 (NQ M1, full real CME frictions, GA-tuned tabular Q) reports PF 1.07 / Sharpe 1.04 — the only fully cost-honest paper in the library. Zhang/Zohren/Roberts 2019 shows monotone Sharpe decay in cost-bp on daily (M1 turnover is higher → ceiling is lower for our regime). The project's current DDQN γ=0.30 + R4 result (+2.23% mean test, best seed +7.90%, Sortino +3.57) is at the honest end of the literature — close to ceiling, not far below. Calibrate the paper's expectations to this band.
+2. **"Headline" intraday-DRL Sharpes (DeepScalper 1.76–4.75, Goluža 2.76, Huang DRQN 1.5–5.7) all use idealised cost** — 0.08–0.23 bp vs retail XAUUSD spread 20–40 bp (200–500× smaller). Goluža's own ablation kills its model at 0.16 bp, i.e. *before* reaching real cost. Do not cite their headline Sharpes as targets. This is the cost-realism caveat to put in the paper writeup.
+3. **Théaté & Ernst 2020 explicitly documents the DQN do-nothing collapse under realistic cost** — published precedent that frames our Exp 0.5b–0.5e on-policy collapse as a *known structural finding* rather than a bug. This is the citation for the negative-result section of the paper.
+4. **The MDP has an exogenous price process** — next-bar `open[t+1]` and `close[t+1]` do not depend on the current action (no market impact in our cost model). This is a useful structural property worth noting in the MDP section even though the sidecar that exploited it is reverted; it means future extensions can do counterfactual policy evaluation, off-policy importance weighting, or all-action loss correctly.
+5. **The Exp 0.5b–0.5e on-policy collapse is a credit-assignment problem** (four interacting pathologies, summarised in the 2026-05-16 entry below): per-bar SNR ≪ 1 vs spread noise; flat is a zero-variance attractor; $\gamma^k$ horizon decay vs immediate deterministic spread; off-policy bootstrap vs on-policy sampled-advantage asymmetry. This framing should appear in the paper's discussion of why DDQN works and A2C/PPO do not.
+
+### Why the sidecar was reverted
+
+The 1-seed probe at seed=42 was not decisive (baseline test_ret=-0.0143, aug test_ret=-0.0530, both non-collapse; seed=42 is the weak end of baseline per Exp 0.5a where 3-seed mean was +2.23%). Resolving the question would have required the full 3-seed run, then likely committing to four staged ablations — a multi-day branch parallel to the deliverable. The deliverable Exp 1 (DDQN HPO, then Exp 2 action space, then Exp 3 LSTM/GRU) is the priority and the safer path: DDQN already works at the honest profitability ceiling on the recent regime, and the on-policy negative result has the depth of diagnosis a paper needs. Sidecar code and `runs/sidecar_dar/` artifacts were deleted; sidecar memory entries were removed. The lessons above are kept here for the paper writeup.
+
+---
+
+## 2026-05-16 — B1 (Exp 0.5e) COMPLETE: class-weighted BC also collapses A2C/PPO 6/6; imitation branch exhausted; regime/over-training hypothesis ruled out
+
+### Status snapshot
+
+B1 = the cheapest "next-session option" from the 0.5d entry below: keep Phase-1d's BC warm-start but make the cross-entropy **inverse-frequency class-weighted**, on the hypothesis that 1d failed *specifically* because the hindsight expert is flat-majority (plain CE → predict-flat). Implemented, smoke-tested, ran full 6 runs (a2c+ppo × seeds 42/1337/2026 × 300k, γ=0.30, R4, same 4-knob fix, parallel N=4 via `scripts/run_exp05e_parallel.py`, `runs/exp05e/`). **Verdict: NEGATIVE — 6/6 collapse, same as 1d.**
+
+### Expert flat-fraction measured (confirms the 1d diagnosis quantitatively)
+
+Over 40 train days, `compute_expert_actions` distribution by (h, noise_threshold):
+
+| h | th | short | flat | long |
+|--:|--:|--:|--:|--:|
+| 5 | 0.0005 | 0.072 | **0.857** | 0.071 |
+| 10 | 0.0005 | 0.123 | 0.754 | 0.123 |
+| 20 | 0.0005 | 0.186 | 0.628 | 0.186 |
+| 20 | 0.0002 | 0.341 | 0.315 | 0.344 |
+
+At the 1d/B1 default (h=5, th=0.0005) the expert is **85.7% flat** — worse than the ~63–70% the prior memory estimated. short/long are always symmetric, so the imbalance is purely flat-vs-(short+long), which inverse-frequency weighting targets exactly (verified `freq_c·w_c = 1/K` per class).
+
+### What B1 changed (single variable vs exp05d)
+
+`_inv_freq_weights(targets, n_actions, device)` added to `src/a2c.py` (one source of truth; `src/ppo.py` imports it). `bc_class_weight` ctor arg on A2CAgent/PPOAgent; `F.cross_entropy(..., weight=)` wired in both. PPO computes weights **once per rollout** from valid expert labels (class-freq is policy-independent, so unlike adv-norm it does NOT go stale across K epochs — kept consistent with the project's per-rollout-PPO convention). Config: `bc.class_weight: false` default (no effect on other runs). `scripts/run_exp05e_parallel.py` = exp05d clone with only `class_weight: True` changed.
+
+### Result and the mechanism it proves
+
+Class weighting **worked at its stated job**: every run traded heavily *during* the BC phase — eval1 @30k showed 3000–6000 val trades (vs 1d, which committed straight to flat). But after BC anneal completes at step 100k, **every run collapses to val_trades=0 by eval3 (≈90k) and stays there to 300k.** Final test, all 6 runs: eq=$10000.00 exactly, trades=0.
+
+This is the informative part: B1 *removed* the 1d flat-commitment (policy traded fine under BC) and the run **still collapsed** once BC was withdrawn. Therefore the 1d flat-majority was **not the root cause** — it was a symptom. Root cause unchanged from the 0.5d entry: the post-BC RL phase has no learning signal that makes trading positive-EV (credit-assignment), compounded by `rl_lr` annealing down to the R4-scale 1e-5/1e-6 which leaves the RL phase too weak to hold the policy off the flat attractor. The whole imitation branch (1d plain BC + B1 weighted BC) is now exhausted.
+
+### User hypothesis tested and ruled out: "trained too long / train regime misses recent val regime"
+
+1. **Over-training is mechanically impossible here.** 300k timesteps ≈ **0.38 epoch** (600 train days × ~1300 bars ≈ 780k steps per full pass). The agent never even completes one sweep of the train set — if anything the risk is under-, not over-fitting.
+2. **Regime/distribution-shift ruled out as the collapse cause.** DDQN+R4 γ=0.30 (Exp 0.5a) ran the **identical** split — train 2023-06-05→2025-09-29, val 2025-09-30→2026-01-14, test 2026-01-15→2026-04-30 — same reward, same 300k horizon, and made **+2.23% mean test return (best seed +7.90%), 0/3 collapse** on the most-recent test months. Same data, only the algorithm class differs (off-policy value vs on-policy PG). So the on-policy collapse is algorithm-structural, not a regime or duration artifact.
+3. **Collapse signature is "doesn't trade", not "trades and loses".** All collapsed runs show val_trades=0, not low-winrate-high-trades. A regime mismatch would show trading-but-losing.
+   - Caveat kept for later: distribution-shift is still a valid question **for DDQN's Exp 1** (watch per-seed val→test degradation when the agent actually trades) — just not the explanation for on-policy collapse.
+
+### Next (unchanged recommendation)
+
+Imitation branch closed. Remaining options: VC-PPO decoupled critic λ (PPO-only, ~30 LOC) / switch on-policy algo (SAC-Discrete, Recurrent PPO) / **proceed Exp 1 DDQN-only and document A2C/PPO as a characterized structural negative — recommended**: DDQN γ=0.30 works on the recent regime, the deliverable is the comparison, and the negative is now diagnosed across γ-sweep + 4-knob + plain BC + class-weighted BC with an explained mechanism. Note `proposal/algorithm_extensions.md` (reference for the algo-switch options) was `git rm`'d this session but is recoverable via `git checkout HEAD -- proposal/algorithm_extensions.md`.
+
+---
+
 ## 2026-05-16 — Exp 0.5b/c/d ALL COMPLETE: on-policy collapse is structural (neither hyperparameter tuning nor BC warm-start fixes A2C/PPO); DDQN remains the working baseline
 
 ### Status snapshot
@@ -555,157 +619,16 @@ cv:
 - Rollout cadence: A2C/PPO noted as 1 rollout = 1 trading day in Exp 1 setup table.
 - Baselines: removed duplicate Buy-and-hold/Long-only entry; descriptions sharpened.
 
-## 2026-05-14 — Added PPO (proposal §4.6, third algorithm — full set complete)
+## 2026-05-13 / 2026-05-14 — Pre-portfolio-MDP pipeline work (compacted 2026-05-17)
 
-Added Proximal Policy Optimization from scratch in PyTorch under the same MDP/env as DDQN and A2C. New files: [src/ppo.py](src/ppo.py), [src/train_ppo.py](src/train_ppo.py), [scripts/train_ppo.py](scripts/train_ppo.py). New config section [config.yaml](config.yaml) `ppo:`.
+Six entries on 2026-05-13/14 covered the early pipeline build under the **old return-based MDP** (15-dim state, log-return reward, commission cost, no $-equity). All of that was **superseded on 2026-05-15** by the portfolio-MDP rebuild (next entry below); the still-active findings are kept here as bullets, and the full entries are recoverable via `git log -p JOURNAL.md`.
 
-**Design (locked in with user before coding):**
-- **Reuses `ActorCritic`, `Rollout`, `compute_gae` from [src/a2c.py](src/a2c.py)** — same shared-trunk MLP `15 → 128 → 128` with Tanh + 2 heads, same GAE(λ), same orthogonal `gain=0.01` policy-head init. Only the update rule differs.
-- **Episode-aligned rollouts** (1 rollout = 1 trading day). Same as A2C — no partial-trajectory bootstrap.
-- **Clipped surrogate policy loss:** `L^CLIP = E[ min(r·A, clip(r, 1−ε, 1+ε)·A) ]` with `ε = clip_range = 0.2`.
-- **K SGD epochs per rollout** (`n_epochs = 10`) with **minibatch sampling** (`minibatch_size = 128`). Rollout ~1000-1400 bars → ~8-11 minibatches × 10 epochs = ~80-110 gradient steps per episode (vs A2C's 1). This is where PPO's sample efficiency comes from.
-- **Optional value clipping** (`clip_range_vf`, default `null` = off). When enabled, takes `max(unclipped_vl, clipped_vl)` like SB3/baselines.
-- **Optional KL early-stop within an update** (`target_kl`, default `null` = off). When enabled, breaks out of remaining epochs if mean approx-KL > 1.5×target — matches SB3's behavior.
-- **Advantage normalization per minibatch** (not per rollout — slight difference from A2C). Stabilizes gradient scale when clip ranges are tight.
-- **`lr = 0.0003`** (Schulman 2017 baseline; lower than A2C's 0.0007 because PPO does ~80× more gradient work per rollout). All other coef defaults match A2C (`value_coef=0.5`, `entropy_coef=0.01`, `max_grad_norm=0.5`, `gamma=0.99`, `gae_lambda=0.95`).
+**Still-active findings from this period (kept verbatim in CLAUDE.md "Insights" where applicable):**
 
-**Drop-in interface:** `PPOAgent.select_action(obs, step=0, deterministic=...)` matches DDQN/A2C signature, so `evaluate_policy_per_session()` from [src/train.py](src/train.py) handles all three agents without modification.
+- **2026-05-13** — Pipeline rebuilt to proposal spec (15-dim state, MACD/STO/RSI/ATR + 5 positional features TL/POS/PR/DR/HT, next-bar-open execution, no future leakage). Switched to **pooled period-level metrics** (DeepScalper §5.2): one metric row per eval pass over concatenated per-bar returns, not per-day-then-averaged. `total_return = exp(sum r) − 1`. Equity is continuous within an eval pass but resets between train/val/test. Train-phase Sharpe is **not logged** and should not be — train returns come from a stochastic policy.
+- **2026-05-14 (DDQN from scratch)** — Replaced SB3 with from-scratch PyTorch DDQN. A/B at 3 seeds × 150k steps: policy-quality metrics (best val, test return, MDD, winrate) pass at 1σ; Sharpe/Sortino "FAIL" results were ratio-metric artifacts on tiny absolute values at n=3. Do NOT bring SB3 back. All three algos are scratch implementations for fair comparison.
+- **2026-05-14 (A2C / PPO added)** — On-policy gradient algorithms need tighter gradients than DDQN: **A2C lr=0.0007, max_grad_norm=0.5; PPO lr=0.0003, max_grad_norm=0.5; DDQN lr=0.0045, max_grad_norm=10.0**. Keep these gaps if you tune. Other locked-in choices: shared trunk + 2 heads (policy/value) with Tanh, orthogonal init gain=0.01 on policy head, episode-aligned rollouts (1 rollout = 1 day, `last_value=0` at EOD), GAE(λ=0.95). **PPO advantage normalization is per-minibatch (rollout-level statistics go stale across K epochs); A2C is per-rollout** — don't unify.
+- **2026-05-14 (normalization ablation)** — Rolling z-score on market features (windows 60, 240) made things worse or no better than raw. Removed from `src/features.py`. Real bottleneck was over-trading collapsing into "do nothing", not feature scale — don't re-introduce normalization as a fix for poor trading metrics.
+- **2026-05-14 (pipeline audit)** — Fixed `DayCycleEnv` off-by-one (cursor was advancing during `__init__` and skipping `order[0]` every cycle). Decoupled eval cadence from epoch (`eval_every_sessions`). Decoupled "epoch" from "session" (epoch = one full pass over `train_dates`). `metrics.csv` schema settled on `episode, global_step, epoch, phase, ...`. Data-leak audit passed: chronological splits, causal features, action→`open[t+1]` execution.
 
-**TB diagnostics added beyond A2C's set:** `train/approx_kl` (Schulman k1 estimator), `train/clip_fraction` (fraction of ratios outside `[1-ε, 1+ε]`), `train/n_epochs_run` (1..n_epochs depending on KL early-stop). Trading metrics identical to DDQN/A2C.
-
-**Smoke test (5k steps, 3 episodes):** end-to-end works. `EV = +0.71` after just 1 update — far better than A2C's +0.45 after 2 episodes, confirming PPO's sample efficiency advantage. `KL ≈ 0.006-0.009` (well below the typical 0.015 ceiling), `clip_fraction ≈ 0.02-0.11` (healthy range, Schulman 2017 reports 0.1-0.3 typical). Entropy slowly dropping from 1.090 to 1.074. All 10 epochs ran in every update (no early-stop). No NaN, no policy collapse.
-
-**Why PPO decisions diverge from A2C choices:**
-- `lr` 0.0003 vs A2C 0.0007 → PPO does much more gradient work per episode (10 epochs × ~10 minibatches vs 1 full-batch step). Smaller lr keeps the cumulative update bounded.
-- Advantage normalization happens at minibatch level vs A2C's rollout level → tighter scale control across the K epochs (the rollout-level statistics would become stale as the policy moves).
-- Otherwise both algorithms share the same actor-critic, env, GAE, and entropy bonus — fair comparison setup for the proposal's three-algorithm benchmark.
-
-## 2026-05-14 — Added A2C (proposal §4.6, second algorithm)
-
-Added Advantage Actor-Critic from scratch in PyTorch under the same MDP/env as DDQN. New files: [src/a2c.py](src/a2c.py), [src/train_a2c.py](src/train_a2c.py), [scripts/train_a2c.py](scripts/train_a2c.py). New config section [config.yaml](config.yaml) `a2c:`.
-
-**Design (locked in with user before coding):**
-- **Shared trunk + 2 heads.** MLP `15 → 128 → 128` with **Tanh** (smoother gradients than ReLU for on-policy); policy head → 3 logits, value head → scalar. Policy head initialized with orthogonal `gain=0.01` so early policy is near-uniform (`H ≈ log(3) ≈ 1.0986`) without relying on entropy bonus alone.
-- **Episode-aligned rollouts.** 1 rollout = 1 full trading day. Update fires at episode boundary. No partial-trajectory bootstrapping: `last_value = 0` because the env force-flattens at EOD (position closed, P&L final).
-- **GAE(λ).** δ_t = r_t + γV(s_{t+1})(1−d_t) − V(s_t); A_t = δ_t + γλ(1−d_t)A_{t+1}; return_t = A_t + V(s_t). Default `gae_lambda = 0.95`.
-- **Advantage normalization per rollout** (`normalize_advantage: true`). Handles our small reward magnitudes (~±0.001 per bar) at the algorithm level — env/reward unchanged from DDQN.
-- **Combined loss** `L = −E[A · log π] + value_coef · MSE(V, R) − entropy_coef · H(π)`. Defaults `value_coef = 0.5`, `entropy_coef = 0.01`, `max_grad_norm = 0.5` (tighter than DDQN's 10.0 because on-policy gradients are noisier and unbounded).
-- **No clipping, no multiple epochs per rollout** — that's PPO. A2C does one Adam step per episode.
-- **Reuses everything from DDQN trainer:** `DayCycleEnv`, `pooled_metrics`, `trade_pnls_from_session`, `evaluate_policy_per_session`. Same MDP, same eval/CSV/TB/summary semantics. Same `best.pt` checkpoint key (state dict).
-- **TB scalars under `train/*`** add A2C-specific diagnostics: `policy_loss`, `value_loss`, `entropy`, `total_loss`, `explained_variance`. Same trading metrics as DDQN (`total_return`, `mdd`, `trades`, `winrate`, `sharpe`, `sortino`, `episode_reward`, `episode_length`, `episode_count`, `epoch`).
-
-**Interface convention for cross-agent eval reuse.** `A2CAgent.select_action(obs, step=0, deterministic=...)` matches `DDQNAgent.select_action()` exactly so `evaluate_policy_per_session()` accepts both — type hint widened from `DDQNAgent` to plain `agent`. `step` arg is ignored by A2C (no ε-schedule).
-
-**Smoke test (5k steps, 3 episodes):** end-to-end works. Entropy starts at 1.099 (= log 3) confirming uniform-init. Explained variance climbs from −1.17 → +0.45 in 2 episodes — value head learning. Train rollouts have many trades (stochastic sampling) but val/test rollouts have few (deterministic argmax on near-uniform early policy lands on flat) — expected behavior, will resolve as policy sharpens during training.
-
-**Why A2C decisions diverge from DDQN choices:** A2C `lr = 0.0007` (vs DDQN 0.0045) because on-policy updates are higher-variance and less sample-reuse-stable. `max_grad_norm = 0.5` (vs 10.0) for the same reason — policy gradient norms explode more readily. These follow standard A2C tuning practice (RLlib, OpenAI Baselines, SB3 defaults).
-
-## 2026-05-14 — Replaced SB3 DDQN with from-scratch PyTorch DDQN
-
-Refactor: removed Stable-Baselines3 dependency entirely and replaced it with a from-scratch DDQN implementation. The new code lives in two files:
-- [src/ddqn.py](src/ddqn.py): `QNetwork`, `ReplayBuffer`, `EpsilonSchedule`, `DDQNAgent` (online + target nets, Double DQN target, hard target update, Adam `eps=1.5e-4`, Huber loss, gradient clipping).
-- [src/train.py](src/train.py): rewrote `train_ddqn(cfg)` as a direct env-loop instead of `model.learn(...)` + callback. Owns `DayCycleEnv`, `pooled_metrics`, `extract_trades`, `trade_pnls_from_session`, `evaluate_policy_per_session`. Same artifact schema as before (`metrics.csv`, `trades.csv`, `summary.json`, TB scalars). Best checkpoint is now `best.pt` (torch state dict) instead of `best.zip`.
-
-**Validation A/B before removal** (3 seeds × 2 backends × 150k steps; results in `runs/_validate/`):
-
-| metric              | SB3 mean | SB3 sd  | Scratch mean | Scratch sd | Δ/sd  | verdict |
-|---------------------|----------|---------|--------------|------------|-------|---------|
-| best_val_value      | +0.0620  | 0.0275  | +0.0433      | 0.0355     | -0.68 | PASS    |
-| test_total_return   | -0.0163  | 0.0171  | -0.0226      | 0.0111     | -0.37 | PASS    |
-| test_mdd            | -0.0784  | 0.0296  | -0.0716      | 0.0345     | +0.23 | PASS    |
-| test_trades         | 202.0    | 155.08  | 306.0        | 10.44      | +0.67 | PASS    |
-| test_winrate        | 0.4650   | 0.0961  | 0.4357       | 0.0386     | -0.30 | PASS    |
-| test_sharpe         | -0.00148 | 0.00140 | -0.00614     | 0.00772    | -3.22 | FAIL*   |
-| test_sortino        | -6.28    | 6.80    | -14.22       | 12.01      | -1.17 | FAIL*   |
-| total_episodes      | 106.3    | 6.35    | 84.3         | 16.80      | -3.46 | FAIL*   |
-
-(*) FAILs are statistical artifacts of n=3 + ratio metrics (Sharpe/Sortino) with tiny absolute values, not policy-quality differences. Policy-quality metrics — best val return, test total_return, MDD, winrate — pass at 1σ. Per-seed numbers differ because the two implementations have different RNG ordering (network init, replay sampling, ε-greedy roll); fixing the seed only matters for re-runs of the *same* code, not for cross-implementation equivalence.
-
-**Config changes:** dropped `dqn.policy: MlpPolicy` and the `# SB3 DQN uses Double DQN target by default` comment. Renamed `train.sb3_log_interval` → `train.log_interval`. All other knobs unchanged.
-
-**Why scratch instead of SB3:** A2C and PPO need to live under the same MDP/env. Implementing all three from scratch makes them comparable, makes algorithm-level extensions (Dueling, PER, NoisyNet, LSTM policy, custom advantage estimators) tractable without subclassing third-party abstractions, and aligns with the FRA 503 coursework goal of understanding the algorithms rather than wiring up an existing library.
-
-**Deleted:** `src/train_scratch.py`, `scripts/train_ddqn_scratch.py`, `scripts/run_validation.py`, `scripts/compare_runs.py` (validation infra no longer needed). `stable-baselines3` removed from the active dependency surface.
-
-## 2026-05-14 — Normalization ablation (3 runs × 500k, 1 seed each)
-
-Tested rolling z-score on the 10 market features at three window sizes vs no normalization. All other knobs from `config.yaml` (lr=0.0045, exploration_fraction=0.6, hidden=[128,128], total_timesteps=500k, early_stop_patience=5, best_metric=total_return).
-
-| Run            | Window | Test ret | Best val ret | Episodes |
-|----------------|--------|----------|--------------|----------|
-| `exp_no_norm`  | 0      | -0.24%   | +8.95%       | 110      |
-| `exp_zscore_w60` | 60   | -0.55%   | +5.79%       | 66 (early stop fast) |
-| `exp_zscore_w240` | 240 | -0.41%   | +4.09%       | 143      |
-
-**Verdict: normalization did not help.** All three policies degenerated to near-zero trading on test (42–199 trades on 20 days), so any test-metric difference is dominated by "which policy stopped trading earliest", not trading skill. `no_norm` even had the highest best-val. w240 had slightly smoother training and a smaller val-test gap than w60 (which oscillated and early-stopped fastest), but neither beat the baseline.
-
-Removed `rolling_zscore_window` from config and the implementation in `src/features.py`. Real bottleneck is over-trading collapsing into "do nothing"; will tackle that next (exploration schedule, commission, training duration).
-
-## 2026-05-14 — Audit pass: epoch semantics, eval cadence, TB coverage, bug fixes
-
-User-requested review of the pipeline. Findings + fixes:
-
-**Bug fixes (`src/train.py`):**
-- `DayCycleEnv.__init__` was calling `_advance_inner()` to probe action/observation spaces, which moved the cursor to 1 *before* SB3's first `reset()` call. That caused `order[0]` to be skipped on every cycle (1 session missing per epoch). Rewrote `__init__` to use a side-effect-free `_first_valid_day()` probe; the cursor now stays at 0 until the first real `reset()`.
-- Added `current_date` tracking on `DayCycleEnv` for debug/inspection.
-
-**Epoch + eval semantics:**
-- "Epoch" no longer means "one train session". It now means "one full pass over `train_dates`" (88 sessions). Tracked as `train/epoch` in TB and `epoch` column in metrics.csv.
-- Eval cadence is decoupled from epoch: controlled by `train.eval_every_sessions` (default 11 train episodes between val passes). Renamed from the old `eval_every_epochs`.
-- Best-checkpoint and early-stop counters now reference eval count, not epoch count.
-- `best_info.json` now records both `episode` and `epoch` at the time of the best checkpoint.
-
-**TensorBoard coverage (was: only `val/*` + `train/episode` counter):**
-- `train/episode_reward`, `train/episode_length`, `train/episode_count`, `train/epoch` per train episode.
-- Re-enabled SB3 internal TB log via `tensorboard_log=tb_dir` + `tb_log_name="sb3"`. Loss, exploration_rate, q_values, and rollout stats are now captured (cadence: `train.sb3_log_interval`).
-- `test/*` scalars (total_return, sharpe, sortino, mdd, trades, winrate) logged once at end of run.
-
-**Schema changes:**
-- `metrics.csv`: dropped empty `day` column, added `epoch`, renamed `epoch` (old, = session count) → `episode`. New header: `episode, global_step, epoch, phase, total_return, mdd, trades, winrate, sharpe, sortino`. Test row written as `episode=BEST`.
-- `summary.json`: added `total_epochs`, `total_evals`, `sessions_per_epoch`, `eval_every_sessions`.
-
-**Data-leak audit (no leaks found):**
-- Splits are chronological by date; train/val/test never overlap.
-- `build_features` is computed on the whole concatenated series (causal rolling/EWM only). Val/test days' warmup windows can reach back into earlier-phase data, but that earlier data is *past* relative to the evaluation point — this is correct behavior, not a leak.
-- Reward execution at `open[t+1]` and mark-to-market at `close[t+1]` are both *future* bars relative to the action; state at time t uses only `market_feat[t]` (built from close ≤ t). No look-ahead.
-
-**Sampling convention:** train sessions are shuffled per epoch (off-policy DQN convention), not chronological / sliding window. Splits themselves remain chronological — only the *order of visiting* train sessions is randomized.
-
-**Smoke run** still on previous bugged pipeline — `runs/sanity` numbers are now stale in three ways (Sharpe formula, pooled metrics, missed-session bug). Will rerun.
-
-## 2026-05-13 — Proposal-aligned pipeline rebuilt from scratch
-
-Replaced the 1911.10107 vol-scaled implementation with the proposal spec (DRL_proposal_6509_6571.pdf). Cleared `runs/` and rewrote all of `src/`.
-
-Changes:
-- **State**: was `(60, n_features)` sequence with EWMA-σ-normalised returns → now **15-dim flat vector** (10 market + 5 positional) per proposal §4.2. No LSTM input.
-- **Features**: dropped EWMA σ, normalised close. Added STO(14), ATR(14), spread (as a feature, not just cost), MACD raw value (no signal/hist), RSI(14).
-- **Positional features** (new in state): `TL, POS, PR, DR, HT` — bars-to-EOD, position scalar, unrealised return since entry, cumulative daily log return, holding time in bars.
-- **Reward**: switched from paper Eq.4 (vol-scaled return − cost) to proposal §4.4 `log((p_exec + a·(C_{t+1}−p_exec) − tx)/p_exec)`. Execution at **next-bar open** when action changes (no close-bar leakage); transaction cost = `COM × p_exec × |Δa|`.
-- **Algorithm**: scratch Dueling-LSTM-DQN → **SB3 DQN (MlpPolicy)**. SB3's DQN already implements Double DQN target.
-- **Library**: added `stable-baselines3==2.7.1`.
-
-Sanity run (`runs/sanity`, 20k timesteps, 15 episodes):
-- Pipeline end-to-end works. No NaN, no crash. All output files written (metrics.csv, trades.csv, best.zip, summary.json, tb/).
-- Val Sharpe per day: -0.33 best (epoch 8). Test: ret -0.81%, Sharpe -0.59, Sortino -0.82, MDD -2.11%, trades 55.6/day, winrate 0.44.
-- Result is expected for 15 episodes; the point was to verify the pipeline.
-
-Known gaps / TODOs:
-- (none in this revision — see 2026-05-14 entry below for the audit pass that closed remaining items)
-
-## 2026-05-13 — Switched to pooled period-level metrics (DeepScalper §5.2)
-
-After re-reading DeepScalper §5.2 carefully, the `r` in `SR = E[r]/σ[r]` is a single per-bar return sequence spanning the whole test period — not per-day. Reward in §3.2 is per-minute and net-value curves in Fig 5 are continuous across days. Reverted the project's "per-day-then-average" convention for these metrics to match the paper.
-
-What this changed:
-- `src/train.py`: split old `session_metrics()` into `pooled_metrics()` (DeepScalper-style) + helper `trade_pnls_from_session()`. `evaluate_policy_per_session()` now concatenates per-bar returns across all phase sessions and calls `pooled_metrics()` once. Returns one dict, not an average of per-day dicts.
-- `total_return` is now `exp(sum r) − 1` (DeepScalper TR), not `sum log r`.
-- `winrate` is now pooled (total wins / total trades) — exception to the old "no pooled winrate" rule, accepted because we are mirroring the paper.
-- `trades` is total count across the phase, not per-day average.
-- Equity is continuous across days within one eval pass (env still flat-closes at EOD, so no overnight gap). It does NOT carry across train/eval/test passes — each pass starts equity at 1.0.
-- Best-checkpoint criterion = pooled val Sharpe (was per-day-averaged val Sharpe).
-- `metrics.csv` now writes one row per eval pass; `day` column left empty.
-
-Train-phase Sharpe is still not logged. Train returns come from a stochastic ε-greedy policy and would mix with exploration noise; DeepScalper itself reports only on test. The TODO to add train per-day metrics is now obsolete in its old form.
-
-Old `runs/sanity` numbers are not comparable in any direction to runs under this metric (different scaling AND different aggregation).
+**What was superseded (do not act on the old detail):** the 15-dim state (now 16-dim with `equity_ratio`); the log-return reward (now R1/R2/R4 portfolio rewards); commission-based cost model (now spread-only from parquet); equity-starts-at-1.0 convention (now $10k portfolio); SB3 dependency (gone). See 2026-05-15 entry for the rebuild that replaced all of these.

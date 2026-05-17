@@ -37,6 +37,7 @@ d:\EA\
     ppo.py              # PPO agent (reuses ActorCritic + Rollout + GAE from a2c.py; clipped surrogate, K-epoch minibatch SGD)
     train_ppo.py        # PPO training loop: same shape as train_a2c.py with PPO-specific TB diagnostics
     baselines.py        # 5 baseline strategies: FlatBaseline, LongBaseline, ShortBaseline, RandomBaseline, MACrossoverBaseline; all drop-in for evaluate_policy_per_session()
+    expert.py           # daily hindsight action labeler (h-bar lookahead + noise_threshold -> action_idx); used by B1 (class-weighted BC warm-start) in train_a2c/train_ppo
     hpo.py              # Optuna objective: per-algo search space (R4 mode adds reward_beta + reward_dd_thresh), inner-CV loop, aggregate_fold_scores; min_trades filter
   scripts/              # entry points (add src/ to sys.path)
     sanity.py           # quick 20k-timestep run to verify pipeline (DDQN)
@@ -46,6 +47,7 @@ d:\EA\
     run_seeds.py        # multi-seed runner: loops ddqn/a2c/ppo over [42,1337,2026], writes seeds_summary.csv + seeds_aggregate.json
     run_baselines.py    # evaluates all 5 baselines on test (or val/both), writes runs/baselines/baselines_results.csv + .json
     run_exp0.py         # Experiment 0 sweep: 3 rewards x 3 algos x 3 seeds = 27 runs, no HPO; ranks rewards by mean rank on val
+    run_exp05{a,b,c,d,e}_parallel.py  # anti-collapse phase drivers (parallel N=4 subprocess): 0.5a γ-sweep, 0.5b/c on-policy γ/4-knob, 0.5d plain BC warm-start, 0.5e (B1) class-weighted BC. All historical; 0.5a fixed DDQN, 0.5b/c/d/e characterized on-policy collapse.
     run_hpo.py          # Optuna HPO entry: --algo, TPESampler + HyperbandPruner, sqlite (resumable), writes runs/hpo/<algo>/<study>_best.json
     run_final.py        # pulls best HPO trial -> retrain 500k x seeds on full train -> test once -> runs/final_<algo>/
   runs/                 # one folder per run: metrics.csv, trades.csv, best.pt, summary.json; TB under runs/_tb/<run_name>/
@@ -103,18 +105,21 @@ in the per-bar scalar. `Δ_t = equity_{t+1} − equity_t` (after spread cost):
 - **R2** raw net dollar P&L: `Δ_t`
 - **R4** P&L − drawdown penalty: `Δ_t − β·max(0, DD_t − dd_thresh)`
 
-Every variant is wrapped with **reward normalization** (running-std over the
-whole reward incl. R4 penalty) so all three are comparable at one learning rate
-(PROPOSAL.md Sec. 6.4). Evaluation is never normalized. R3 (vol/SD-penalized)
-was considered and dropped (overlaps R4, noisier on M1).
+Reward normalization (running-std) was the original proposal (PROPOSAL.md
+Sec. 6.4) but was **disproved by A/B test on 2026-05-16** — `RunningStd`
+collapsed the Q-net to flat. Current default: `env.reward.normalize: false`
+in `config.yaml`. Comparability across R1/R2/R4 is now obtained via
+per-reward learning-rate overrides (`dqn.lr_per_reward` etc.) instead.
+Evaluation is never normalized either way. R3 (vol/SD-penalized) was
+considered and dropped (overlaps R4, noisier on M1).
 
 ### Training (proposal §4.6)
 
 - **Algorithm:** Double DQN, implemented from scratch in PyTorch ([src/ddqn.py](src/ddqn.py)). Online + target Q-nets, ε-greedy exploration, hard target update every `target_update_interval` env steps, Huber (SmoothL1) loss, Adam optimizer with `eps=1.5e-4`, gradient clipping at `max_grad_norm`. A2C and PPO will follow under the same MDP/env.
 - **Policy network:** MLP `16 → hidden_sizes → n_actions` with ReLU. State is flat 16-dim (portfolio MDP), no recurrent.
-- **Epoch** = 1 full pass over the train set (`sessions_per_epoch = len(train_dates)`, currently 88). Reported in TB/CSV/summary as `train/epoch` but not used for control flow.
+- **Epoch** = 1 full pass over the train set (`sessions_per_epoch = len(train_dates)`: 600 on the held-out train split that `train_*.py`/`run_seeds.py` use, or 480–576 inside HPO inner-CV folds). Reported in TB/CSV/summary as `train/epoch` but not used for control flow.
 - **Sampling within an epoch:** train sessions are **shuffled** at the start of every epoch (no chronological order during training). This is standard for off-policy DQN where the replay buffer breaks temporal correlation anyway. Splits themselves (train/val/test) remain chronological so no future leakage.
-- **Eval cadence:** every `eval_every_sessions` completed train episodes (default 11). Each eval is a deterministic rollout over **all** val sessions, concatenated into one pooled return sequence for DeepScalper-style metrics.
+- **Eval cadence:** every `eval_every_sessions` completed train episodes (current `config.yaml` value: 22 ≈ once every 2 epochs at 600-session train; was 11 pre-2026-05-15). Each eval is a deterministic rollout over **all** val sessions, concatenated into one pooled return sequence for DeepScalper-style metrics.
 - **Best checkpoint:** highest pooled val `<best_metric>` seen so far. `best_metric` is configurable in `train.best_metric` ∈ {`total_return`, `sharpe`, `sortino`}; current default is `total_return`. Saved as `best.pt` (torch state dict with `online`, `target`, `optim` keys).
 - **Early stop:** `early_stop_patience` consecutive evals with no val `<best_metric>` improvement.
 - **Logging:** `metrics.csv` + `trades.csv` (CSV), `summary.json` (final), and TensorBoard scalars under these groups:
@@ -199,7 +204,8 @@ TL;DR of lessons learned. For full context including A/B numbers, dates, and rej
 
 > ⚠️ **2026-05-15 — MDP rebuilt to portfolio-based (PROPOSAL.md).** Code is now
 > portfolio-MDP-compliant (16-dim state, $10k capital, spread cost, R1/R2/R4
-> reward with running-std normalization, equity≤0 ruin termination). The
+> reward with optional running-std normalization (default OFF after 2026-05-16
+> A/B disproof — kept in code as a toggle), equity≤0 ruin termination). The
 > rebuild covered `src/env.py`, all three trainers (`train.py`, `train_a2c.py`,
 > `train_ppo.py`), `config.yaml`, `scripts/run_baselines.py`, `scripts/run_seeds.py`,
 > `src/hpo.py` (R4 search-space), `scripts/run_final.py`, and added
@@ -218,7 +224,7 @@ TL;DR of lessons learned. For full context including A/B numbers, dates, and rej
 - **DDQN was migrated SB3 → from-scratch PyTorch (2026-05-14).** A/B at 3 seeds × 150k steps passed at 1σ on policy-quality metrics (best val, test return, MDD, winrate). Sharpe/Sortino "FAIL" results were n=3 ratio-metric artifacts on tiny absolute values, not a real divergence. Don't bring SB3 back. All three algorithms are scratch implementations for fair comparison.
 - **A2C and PPO need tighter gradients than DDQN.** A2C uses `lr=0.0007`, `max_grad_norm=0.5`; PPO uses `lr=0.0003`, `max_grad_norm=0.5`. DDQN uses `lr=0.0045`, `max_grad_norm=10.0`. On-policy gradients explode more readily; keep these gaps if you tune.
 - **γ=0.30 is the DDQN project default (Exp 0.5a, 2026-05-16).** It solved DDQN collapse (0/3, +2.23% mean test_ret) and is set in `config.yaml dqn.gamma`. This benefit is **off-policy-specific** — do NOT assume A2C/PPO inherit it (Exp 0.5b: γ=0.3 → 3/3 collapse for both).
-- **On-policy (A2C/PPO) collapse at γ=0.3 is NOT fixable by hyperparameter tuning NOR by BC warm-start (Exp 0.5b/c/d, 2026-05-16).** γ, gae_lambda, value_coef, entropy_coef, n_epochs all tried (1b/1c) → 3/3 collapse. BC warm-start from a hindsight expert (1d) → still 3/3 collapse, but the *mechanism shifted*: BC successfully kills the uniform-random collapse (entropy drops 1.099→0.03–0.14, policy commits) but the policy commits to **flat** (the hindsight expert is ~63–70% flat at h=5, so cross-entropy converges to the majority class), and the post-anneal RL phase (γ=0.3, noisy advantage) cannot pull it off flat. Net: every on-policy fix so far ends at val_trades≈0. Deeper root cause now understood: **on-policy at γ=0.3 has no learning signal that makes trading positive-EV** — it's a credit-assignment problem, not exploration/init. Next ideas must NOT be "tune more knobs" or "more imitation"; candidates to brainstorm fresh: class-balanced/weighted BC loss, lower expert flat-fraction (smaller noise_threshold or larger lookahead h), VC-PPO decoupled critic λ, longer/curriculum BC, risk-sensitive objective, or switching the on-policy algo (SAC-Discrete / Recurrent PPO per `proposal/algorithm_extensions.md`). DDQN (off-policy) is unaffected and remains the working baseline at γ=0.30.
+- **On-policy (A2C/PPO) collapse at γ=0.3 is NOT fixable by hyperparameter tuning, BC warm-start, NOR class-weighted BC — the imitation branch is exhausted (Exp 0.5b/c/d + B1/0.5e, 2026-05-16).** γ, gae_lambda, value_coef, entropy_coef, n_epochs all tried (1b/1c) → 3/3 collapse. Plain BC warm-start from a hindsight expert (1d) → 3/3 collapse: BC kills the uniform-random collapse but the policy commits to **flat** (expert is **85.7% flat** at h=5/th=0.0005 — measured exactly this session, worse than the earlier ~63–70% guess). B1/0.5e added inverse-frequency class-weighted CE so flat can't be the easy answer: it **worked** (runs traded 3000–6000×/eval during the BC phase) but **still collapsed 6/6 to val_trades=0 once BC annealed out** — proving flat-commitment was a *symptom*, not the root cause. Net: every on-policy fix ends at val_trades≈0. Root cause: **the post-BC RL phase has no learning signal that makes trading positive-EV** (credit-assignment), worsened by `rl_lr` annealing to the tiny R4-scale 1e-5/1e-6. Ruled out this session: over-training (300k = only 0.38 epoch) and train→val regime mismatch (DDQN+R4 γ=0.30 made +2.23% test on the *identical* split, 0/3 collapse — only the algo class differs). Do NOT try more imitation/BC variants. Remaining: VC-PPO decoupled critic λ, switch algo (SAC-Discrete / Recurrent PPO per `proposal/algorithm_extensions.md` — deletion currently staged, recover via `git restore --staged --worktree proposal/algorithm_extensions.md`), or **proceed Exp 1 DDQN-only and document A2C/PPO as a characterized structural negative (recommended)**. DDQN (off-policy) is unaffected and remains the working baseline at γ=0.30.
 - **PPO advantage normalization is per-minibatch, A2C is per-rollout.** Don't unify them — PPO's K-epoch SGD makes rollout-level statistics go stale; A2C's single update means rollout-level is fine.
 - **Episode-aligned rollouts for A2C/PPO.** 1 rollout = 1 trading day. `last_value = 0` at episode end (env force-flattens at EOD, P&L final). Do not bootstrap partial trajectories.
 - **Train-phase Sharpe is meaningless and not logged.** Train returns come from a stochastic ε-greedy (DDQN) or sampled (A2C/PPO) policy. DeepScalper itself only reports test. Don't add train Sharpe/Sortino back.
@@ -227,7 +233,7 @@ TL;DR of lessons learned. For full context including A/B numbers, dates, and rej
 - **`runs/` wiped clean 2026-05-15 (twice).** Final wipe: all return-based HPO/runs deleted as invalid after the portfolio-MDP redesign. Only `.gitkeep` remains. Nothing to compare against until the rebuilt env runs Exp 0.
 - **TensorBoard logs live under `runs/_tb/<run_name>/`, NOT `runs/<run_name>/tb/`** (2026-05-15). Event files are separated from run artifacts (best.pt, csv, json). Always `tensorboard --logdir runs/_tb`. Every run also logs `add_hparams()` (algo, lr, seed, hidden_sizes, … → val_<best_metric> + test metrics) and `add_text("config")` — use the HPARAMS tab to compare HPO trials.
 - **HPO adapter contract — `cfg["_hpo"]` is a runtime-only injection.** When present, `train_*()` use the CV fold's `inner_train_dates`/`inner_val_dates` instead of the held-out split, honor `timesteps_override`, and **early-return before the test rollout** with `{hpo_objective, best_metric, val_trades}`. `scripts/train_*.py`, `run_seeds.py`, `run_baselines.py` never set `_hpo` so they are unaffected. `_hpo` is stripped before any `yaml.safe_dump` (it holds pandas Timestamps). Don't persist `_hpo` or let it reach yaml.
-- **HPO timesteps must be large enough for ≥1 val eval per fold.** If training ends before the first eval fires, `best_value` stays −inf, the trial returns −inf and is filtered. 100k/fold with `eval_every_sessions=11` is comfortably safe; do not cut per-fold budget so low that no eval fires.
+- **HPO timesteps must be large enough for ≥1 val eval per fold.** If training ends before the first eval fires, `best_value` stays −inf, the trial returns −inf and is filtered. 100k/fold with the current `eval_every_sessions=22` is comfortably safe (on 480–576 inner-train sessions per fold); do not cut per-fold budget so low that no eval fires.
 - **Experiment structure is now Exp 0→1→2→3** (PROPOSAL.md Sec.5): Exp 0 = reward selection (R1/R2/R4 × 3 algos × 3 seeds, **no HPO**, pick by mean rank across algos), then Exp 1 = algo comparison with full HPO on the winning reward, Exp 2 = action space, Exp 3 = LSTM/GRU. The old "Aggressive HPO Experiment 1" runs (return-based) are **invalid and deleted** — the Aggressive 3-fold/12-trial/100k HPO recipe itself is still the intended HPO config, just to be re-run on the rebuilt portfolio MDP starting from the Exp-0 winning reward.
 
 For history (return-based bake-off, old Aggressive HPO results, portfolio-MDP decision log) see [JOURNAL.md](JOURNAL.md). Active spec is always [proposal/PROPOSAL.md](proposal/PROPOSAL.md).

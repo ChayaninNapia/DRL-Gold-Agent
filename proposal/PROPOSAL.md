@@ -522,9 +522,10 @@ SAC-Discrete), PPO variants (VC-PPO, return-based reward scaling, KL
 early-stop, PPG, GRPO, recurrent PPO), and alternative algorithm families
 beyond the baseline trio (SAC-Discrete, QR-DQN, Decision Transformer, CQL,
 risk-sensitive RL, model-based, hierarchical, evolutionary, imitation
-hybrids) — is in **`proposal/algorithm_extensions.md`**. Each entry cites
-its origin paper. Future Exp 0.5 / Exp 1.5 / Exp 3 designs draw from that
-catalogue.
+hybrids) — was kept in `proposal/algorithm_extensions.md`. That file's
+deletion is currently staged in the working tree (not yet committed); to
+restore it run `git restore --staged --worktree proposal/algorithm_extensions.md`.
+Future Exp 1.5 / Exp 3 designs may draw from that catalogue.
 
 **Order of attack:**
 
@@ -571,11 +572,75 @@ to learn — worse than the conservative γ=0.99 baseline.
 Action: `config.yaml dqn.gamma: 0.99 → 0.30`. Plots and per-run details in
 `runs/exp05a/`; full discussion in JOURNAL.md 2026-05-16 entry.
 
-**Next:** Exp 0.5b is now contingent on Phase 1b (A2C/PPO at γ=0.3). If the
-γ effect generalizes across algorithms, the anti-collapse program may
-collapse from 3 rounds into 1, and Exp 1 (HPO) can start immediately on a
-clean baseline. If A2C/PPO still collapse at γ=0.3, the program proceeds as
-planned to hindsight (0.5b) and dueling/entropy (0.5c).
+### 8.2 Exp 0.5b/c/d Results — A2C/PPO collapse is structural (2026-05-16)
+
+Phases 1b (γ=0.30 on A2C/PPO), 1c (4-knob hyperparameter fix: gae_lambda
+0.95→1.0, value_coef 0.5→0.25, entropy_coef 0.01→0.05, ppo.n_epochs 10→4 —
+from a 3-sub-agent code audit), and 1d (BC warm-start from a daily hindsight
+expert + lr-schedule + CE auxiliary loss) ran 6 A2C/PPO runs each at γ=0.30
++ R4 + 300k steps. **Result: 18/18 collapse to val_trades≈0.**
+
+| Phase | Fix attempted | A2C collapse | PPO collapse |
+|---|---|---|---|
+| 1b | γ=0.30 (the DDQN winner) | 3/3 | 3/3 |
+| 1c | + 4-knob audit | 3/3 | 3/3 |
+| 1d | + BC warm-start (h=5, th=0.0005, coef=1.0, anneal 100k, lr_bc=R1-scale) | 3/3 | 3/3 |
+
+Mechanism shift in 1d (informative): plain BC technically *worked* — entropy
+dropped 1.099 → 0.03–0.14, the policy committed — but it committed to **flat**
+because the hindsight expert is flat-majority (measured ~85.7% flat at
+h=5/th=0.0005). The post-anneal RL phase (γ=0.30, noisy advantage, R4-scale
+RL lr) could not pull the policy off flat once BC withdrew.
+
+### 8.3 Exp 0.5e (B1) Results — class-weighted BC also collapses (2026-05-16)
+
+Hypothesis: 1d failed *specifically* because of the flat-majority CE. Fix:
+inverse-frequency class-weighted BC cross-entropy, same expert (h=5,
+th=0.0005), coef=1.0 — single-variable comparison vs 1d.
+**Result: 6/6 collapse**, mean test_return 0.0, val_trades 0 for every run.
+
+The weighting *did* its narrow job: every run traded heavily during the BC
+phase (eval1 @30k: 3000–6000 val trades, vs 1d which committed to flat). But
+after BC anneal completed at 100k, every run collapsed to val_trades=0 by
+eval3 (≈90k) and stayed there. **This proves the 1d flat-commitment was a
+symptom, not the root cause** — removing it (B1 traded fine under BC) still
+ends in collapse once BC withdraws.
+
+**Root cause (now settled):** on-policy A2C/PPO under sparse net-of-spread
+reward at γ=0.30 has no learning signal that makes *trading* positive-EV
+versus *flat*. It is a credit-assignment problem, not exploration / init /
+tuning / imitation. The deterministic "flat" vertex of the policy simplex is
+a zero-variance attractor; the trading actions' sample advantage is
+noise-dominated and the spread cost is charged immediately and
+deterministically at entry while the multi-bar payoff arrives decayed by
+$\gamma^k$ and corrupted by reward noise.
+
+**Hypotheses ruled out this session** (do NOT re-investigate without a new
+mechanism):
+
+1. **"Trained too long" / over-training.** 300k timesteps ≈ **0.38 epoch**
+   (600 train days × ~1300 bars ≈ 780k steps/epoch). The agent never even
+   completes one pass over the train set.
+2. **Train→val regime mismatch / distribution shift.** DDQN+R4 γ=0.30 (§8.1)
+   ran the *identical* split (train 2023-06-05→2025-09-29, val
+   2025-09-30→2026-01-14, test 2026-01-15→2026-04-30) and made +2.23% mean
+   test return (best seed +7.90%), 0/3 collapse, on the most-recent test
+   months. Same data, same reward, same horizon — only the algorithm class
+   differs. The on-policy collapse is algorithm-structural, not regime.
+3. **Collapse signature is "doesn't trade", not "trades and loses".** All
+   collapsed runs show val_trades=0 (not low-winrate-high-trades). A regime
+   mismatch would show trading-but-losing.
+
+Distribution-shift remains a legitimate question for DDQN's Exp 1 (watch
+per-seed val→test degradation when the agent actually trades) — but not as
+an explanation for the on-policy collapse.
+
+**Anti-collapse program closed.** The imitation branch (1d + 1e) is
+exhausted. Dueling Q + entropy schedule (originally planned as 0.5c) was
+not run after 0.5b made the DDQN/on-policy asymmetry clear — those fixes
+target on-policy/PG mechanisms that the diagnosis says cannot be cured by
+intra-algorithm tweaks. DDQN γ=0.30 + R4 remains the working baseline and
+the planned starting point for Exp 1 (HPO).
 
 ---
 
@@ -590,9 +655,10 @@ planned to hindsight (0.5b) and dueling/entropy (0.5c).
   — current design uses a single `equity ≤ 0` ruin threshold only.
 - **Volatility-scaled reward (R3-family / Zhang-Zohren)** — conflicts with the
   fixed-lot mandate; revisit only if variable sizing is added.
-- **iRDPG-style warm-start from MA-crossover** (Liu et al. AAAI 2020,
-  `5587_13_8812`) — viable next-line fix if Exp 0.5 rounds 1-3 don't solve PPO
-  collapse; behavior-cloning loss for 1k episodes from `MACrossoverBaseline`.
+- ~~**iRDPG-style warm-start from MA-crossover**~~ — superseded 2026-05-16:
+  BC warm-start was implemented in Exp 0.5d using a daily *hindsight* expert
+  (richer signal than MA-crossover) and class-weighted in 0.5e/B1; both
+  collapsed 6/6. See §8.2–8.3.
 - **Dormant-neuron monitoring + ReDo** (Sokar et al. ICML 2023) — diagnostic
   telemetry only; full recycling only if dormancy > 20% per layer.
 
