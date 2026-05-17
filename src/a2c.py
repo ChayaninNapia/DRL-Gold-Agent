@@ -23,6 +23,33 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 
 
+# ---------------------------- BC class weighting (B1) ----------------------------
+
+
+def _inv_freq_weights(
+    targets: torch.Tensor, n_actions: int, device: torch.device
+) -> torch.Tensor:
+    """Normalized inverse-frequency class weights for the BC cross-entropy loss.
+
+    w_c = N / (K * n_c)  for classes present in `targets`; 0 for absent classes.
+    Invariant (verified): the per-class loss contribution freq_c · w_c = 1/K is
+    equal across all present classes — this is the rebalancing B1 needs so the
+    ~86%-flat expert can no longer be fit by predicting flat. Note the absolute
+    BC-loss scale rises under heavy imbalance (mean weight > 1), so bc_coef is
+    NOT directly comparable to the unweighted Phase-1d runs — treat the weighted
+    coef as a fresh knob. Used only when bc.class_weight is true (B1).
+
+    Shared by A2C and PPO so the weighting rule has one source of truth.
+    """
+    counts = torch.bincount(targets, minlength=n_actions).to(torch.float64)
+    n = counts.sum()
+    w = torch.zeros(n_actions, dtype=torch.float32, device=device)
+    present = counts > 0
+    if present.any():
+        w[present] = (n / (n_actions * counts[present])).to(torch.float32)
+    return w
+
+
 # ---------------------------- network ----------------------------
 
 
@@ -139,6 +166,7 @@ class A2CAgent:
         seed: int = 0,
         bc_coef: float = 0.0,
         bc_anneal_steps: int = 0,
+        bc_class_weight: bool = False,
     ):
         self.obs_dim = obs_dim
         self.n_actions = n_actions
@@ -155,6 +183,12 @@ class A2CAgent:
         # linearly from bc_coef -> 0 over bc_anneal_steps env steps.
         self.bc_coef_initial = float(bc_coef)
         self.bc_anneal_steps = int(bc_anneal_steps)
+        # B1 (2026-05-16): inverse-frequency class weighting on the BC CE loss.
+        # The hindsight expert is ~86% flat at h=5/th=0.0005, so plain CE
+        # converges to the flat majority class (Phase 1d collapse mechanism).
+        # Per-rollout normalized inverse-freq weights make each class contribute
+        # equally regardless of how many flat bars dominate that day.
+        self.bc_class_weight = bool(bc_class_weight)
 
         torch.manual_seed(seed)
         self.net = ActorCritic(obs_dim, n_actions, hidden_sizes).to(device)
@@ -267,7 +301,10 @@ class A2CAgent:
             if int(mask.sum().item()) > 0:
                 bc_logits = logits[mask]
                 bc_targets = expert_t[mask]
-                bc_loss = F.cross_entropy(bc_logits, bc_targets)
+                ce_weight = _inv_freq_weights(
+                    bc_targets, self.n_actions, self.device
+                ) if self.bc_class_weight else None
+                bc_loss = F.cross_entropy(bc_logits, bc_targets, weight=ce_weight)
                 loss = loss + bc_coef_now * bc_loss
                 bc_loss_val = float(bc_loss.detach().item())
 

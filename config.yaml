@@ -135,6 +135,10 @@ bc:
   anneal_steps: 0           # 0 = OFF; Phase 1d default = 100_000 (1/3 of 300k training)
   lookahead: 5              # h bars of hindsight (matches gamma=0.3 effective horizon)
   noise_threshold: 0.0005   # fractional move below which expert is "flat"
+  class_weight: false       # B1 (2026-05-16): true = inverse-frequency weighted BC
+                            # CE. Expert is ~86% flat at h=5/th=0.0005, so plain CE
+                            # collapses to the flat majority (Phase 1d). Weighting
+                            # makes short/long/flat contribute equally to BC loss.
   # LR schedule (Option 1, 2026-05-16): BC cross-entropy loss is ~scale 1.0, so the
   # tiny R2/R4 lr (1e-5/1e-6, tuned for dollar-scale RL gradients) cannot move the
   # policy during the BC phase (smoke test: 200 updates @ lr=1e-5 left H at ln(3)).

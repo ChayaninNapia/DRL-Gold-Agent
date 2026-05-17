@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
 
-from a2c import ActorCritic, Rollout, compute_gae
+from a2c import ActorCritic, Rollout, _inv_freq_weights, compute_gae
 
 
 class PPOAgent:
@@ -51,6 +51,7 @@ class PPOAgent:
         seed: int = 0,
         bc_coef: float = 0.0,
         bc_anneal_steps: int = 0,
+        bc_class_weight: bool = False,
     ):
         self.obs_dim = obs_dim
         self.n_actions = n_actions
@@ -72,6 +73,11 @@ class PPOAgent:
         # linearly bc_coef -> 0 over bc_anneal_steps env steps.
         self.bc_coef_initial = float(bc_coef)
         self.bc_anneal_steps = int(bc_anneal_steps)
+        # B1 (2026-05-16): inverse-frequency class weighting on the BC CE loss.
+        # Computed once per rollout from the expert label frequencies (a property
+        # of the expert, not the policy — so it does NOT go stale across PPO's K
+        # epochs, unlike advantage stats). Same rule as A2C via _inv_freq_weights.
+        self.bc_class_weight = bool(bc_class_weight)
 
         torch.manual_seed(seed)
         self.net = ActorCritic(obs_dim, n_actions, hidden_sizes).to(device)
@@ -145,8 +151,15 @@ class PPOAgent:
         # BC: assemble expert tensor and active mask once per rollout
         bc_coef_now = self._bc_coef(global_step)
         bc_active = bc_coef_now > 0.0 and len(rollout.expert_actions) == n
+        ce_weight = None
         if bc_active:
             expert_t = torch.as_tensor(rollout.expert_actions, dtype=torch.int64, device=self.device)
+            if self.bc_class_weight:
+                # Inverse-freq weights from the whole rollout's valid expert
+                # labels (constant across the K epochs — not policy-dependent).
+                ce_weight = _inv_freq_weights(
+                    expert_t[expert_t >= 0], self.n_actions, self.device
+                )
         else:
             expert_t = None
 
@@ -208,7 +221,7 @@ class PPOAgent:
                     if int(bc_mask.sum().item()) > 0:
                         bc_logits_mb = logits[bc_mask]
                         bc_targets_mb = expert_mb[bc_mask]
-                        bc_loss = F.cross_entropy(bc_logits_mb, bc_targets_mb)
+                        bc_loss = F.cross_entropy(bc_logits_mb, bc_targets_mb, weight=ce_weight)
                         loss = loss + bc_coef_now * bc_loss
                         bc_loss_val = float(bc_loss.detach().item())
 

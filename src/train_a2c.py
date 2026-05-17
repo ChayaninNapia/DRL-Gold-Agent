@@ -101,6 +101,7 @@ def train_a2c(cfg: dict) -> dict:
     bc_anneal_steps = int(bc_cfg.get("anneal_steps", 0))
     bc_h = int(bc_cfg.get("lookahead", 5))
     bc_thresh = float(bc_cfg.get("noise_threshold", 0.0005))
+    bc_class_weight = bool(bc_cfg.get("class_weight", False))
     bc_active = bc_coef > 0.0 and bc_anneal_steps > 0
     # LR schedule (Option 1): high lr during BC phase, anneal to base lr by anneal_steps.
     rl_lr = float(a2c_cfg["lr"])
@@ -117,7 +118,8 @@ def train_a2c(cfg: dict) -> dict:
     if bc_active:
         action_space_list = list(cfg["env"]["action_space"])
         print(f"BC warm-start: coef={bc_coef} anneal_steps={bc_anneal_steps} "
-              f"lookahead={bc_h} noise_thresh={bc_thresh} lr_bc={bc_lr} rl_lr={rl_lr}")
+              f"lookahead={bc_h} noise_thresh={bc_thresh} class_weight={bc_class_weight} "
+              f"lr_bc={bc_lr} rl_lr={rl_lr}")
 
     agent = A2CAgent(
         obs_dim=obs_dim,
@@ -134,6 +136,7 @@ def train_a2c(cfg: dict) -> dict:
         seed=seed,
         bc_coef=bc_coef,
         bc_anneal_steps=bc_anneal_steps,
+        bc_class_weight=bc_class_weight,
     )
 
     best_metric = str(cfg["train"].get("best_metric", "sortino")).lower()
